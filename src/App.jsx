@@ -403,7 +403,7 @@ export default function App(){
       const records=[]; const polys=polysAll.map(poly=>{ const ok = (poly.d_um>=Math.min(...filtered, Infinity) && poly.d_um<=Math.max(...filtered, -Infinity)); if(ok) records.push({cx_px:poly.cx, cy_px:poly.cy, d_um:poly.d_um, area_um2: poly.area_px*(umPerPx*umPerPx), per_um: poly.per_px*umPerPx, solidity: poly.solidity, circularity: poly.circularity}); return {...poly, accepted: ok} })
       setContoursPoly(polys); setParticleRecords(records)
 
-      # overlays
+      // overlays
       const maskRGBA=new window.cv.Mat(); window.cv.cvtColor(maskVis, maskRGBA, window.cv.COLOR_GRAY2RGBA, 0)
       for(let y=0;y<maskRGBA.rows;y++){
         for(let x=0;x<maskRGBA.cols;x++){
