@@ -30,7 +30,10 @@ export default function App(){
   const [showOverlays,setShowOverlays]=useState(true)
   const [overlayAlpha,setOverlayAlpha]=useState(0.55)
   const [showDiscarded,setShowDiscarded]=useState(true)
-
+  const [multiOverlays,setMultiOverlays]=useState(false)
+  const [overlayFlags,setOverlayFlags]=useState({
+  mask:false, edges:false, contours:true, circles:true
+})
   const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'none'
   const [maskOverlay,setMaskOverlay]=useState(null) // {image,x,y,w,h}
   const [edgesOverlay,setEdgesOverlay]=useState(null) // {image,x,y,w,h}
