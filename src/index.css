@@ -1,12 +1,30 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+canvas{ touch-action: none; }
+canvas{ touch-action: none; overscroll-behavior: contain; }
 
-/* Mobile tweaks */
-* { -webkit-tap-highlight-color: transparent; }
 
-/* High-contrast card for the logo on dark bg */
-.logo-wrap {
-  backdrop-filter: blur(6px);
+/* Dark + Yellow theme overrides */
+.app-dark-yellow {
+  --accent: #facc15; /* amber-400 */
+  --accent-600: #d97706; /* amber-600 */
+  --bg1: #0a0a0a;
+  --bg2: #111111;
+  --panel: #0b0b0b;
+  --text: #e5e5e5;
+  --muted: #9ca3af;
 }
+.app-dark-yellow .bg-white { background-color: var(--panel) !important; }
+.app-dark-yellow .bg-gray-200 { background-color: #1f1f1f !important; }
+.app-dark-yellow .bg-gray-100 { background-color: #1a1a1a !important; }
+.app-dark-yellow .text-gray-600 { color: var(--muted) !important; }
+.app-dark-yellow h1, .app-dark-yellow h2, .app-dark-yellow h3, .app-dark-yellow h4 { color: var(--text); }
+.app-dark-yellow .shadow { box-shadow: 0 6px 20px rgba(0,0,0,0.5) !important; }
+.app-dark-yellow .border-amber { border-color: var(--accent) !important; }
+.app-dark-yellow .btn { background: var(--accent); color: #111; border-radius: 0.75rem; padding: 0.375rem 0.75rem; font-weight: 600; }
+.app-dark-yellow select, .app-dark-yellow input[type="file"], .app-dark-yellow input[type="range"] {
+  background: #0f0f0f; color: var(--text); border: 1px solid rgba(250,204,21,0.35); border-radius: 0.5rem;
+}
+.app-dark-yellow button { border-color: rgba(250,204,21,0.35); }
+.app-dark-yellow canvas { background: #000; }
