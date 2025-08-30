@@ -1,10 +1,12 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /**
- * Grind Analyzer – Portafiltro (paleta clara + overlays opcionales)
- * - Fix CLAHE (uso correcto y fallback a equalizeHist)
- * - Fix passive listeners (wheel/touch con {passive:false}; sin onWheel en JSX)
- * - Paleta clara (fondo blanco, botones azul/verde)
+ * Grind Analyzer – Portafiltro (paleta clara)
+ * - ROI (área de estudio) y Exclusiones (añadir / borrar última / limpiar)
+ * - Panel de Resultados + Histograma
+ * - Overlays opcionales (Máscara, Borde de máscara, Canny, Contornos, Círculos)
+ * - Fix CLAHE (uso correcto o fallback equalizeHist)
+ * - Fix passive listeners (wheel/touch con {passive:false})
  */
 
 export default function App() {
@@ -18,13 +20,13 @@ export default function App() {
   const imgRef = useRef(null);
 
   // Analysis state
-  const [sizes, setSizes] = useState([]);                 // µm
-  const [particles, setParticles] = useState([]);         // [{cx,cy,r_px,r_um}]
-  const [contoursPoly, setContoursPoly] = useState([]);   // [{pts, accepted, cx, cy, d_um, ...}]
+  const [sizes, setSizes] = useState([]);               // µm
+  const [particles, setParticles] = useState([]);       // [{cx,cy,r_px,r_um}]
+  const [contoursPoly, setContoursPoly] = useState([]); // [{pts, accepted, cx, cy, d_um, ...}]
 
   // Overlays (canvases)
-  const [maskOverlay, setMaskOverlay] = useState(null);       // {canvas,x,y,w,h}
-  const [edgesOverlay, setEdgesOverlay] = useState(null);     // {canvas,x,y,w,h}
+  const [maskOverlay, setMaskOverlay] = useState(null);        // {canvas,x,y,w,h}
+  const [edgesOverlay, setEdgesOverlay] = useState(null);      // {canvas,x,y,w,h}
   const [boundaryOverlay, setBoundaryOverlay] = useState(null);// {canvas,x,y,w,h}
 
   // Overlays selector
@@ -37,27 +39,40 @@ export default function App() {
   const [showContours, setShowContours] = useState(true);
   const [showCircles, setShowCircles] = useState(false);
 
-  // Lens (optional)
+  // Tools / modes
+  const [mode, setMode] = useState("pan"); // 'pan' | 'roi' | 'exclude' | 'rim'
+  const drag = useRef({ active: false, lastX: 0, lastY: 0 });
+  const drawBox = useRef(null); // rect en curso para ROI o exclude
+
+  // Lens (opcional)
   const [lensEnabled, setLensEnabled] = useState(false);
   const lens = useRef({ visible: false, sx: 0, sy: 0, imgx: 0, imgy: 0 });
-  const lensRadius = 80;
-  const lensFactor = 2.0;
+  const lensRadius = 80, lensFactor = 2.0;
 
-  // ROI / exclusions
-  const [roi, setRoi] = useState(null); // {x,y,w,h}
-  const [excls, setExcls] = useState([]);
+  // ROI / exclusiones
+  const [roi, setRoi] = useState(null);     // {x,y,w,h}
+  const [excls, setExcls] = useState([]);   // [{x,y,w,h}]
 
   // Rim/scale
   const [rim, setRim] = useState(null);     // {cx,cy,r}
   const [basketMM, setBasketMM] = useState(58);
   const [customMM, setCustomMM] = useState("");
   const [umPerPx, setUmPerPx] = useState(0);
-  const [viz, setViz] = useState("mask");   // basic gate
 
-  // UI
+  // Viz gate básico
+  const [viz, setViz] = useState("mask");
+
+  // Results
+  const [results, setResults] = useState({ N: 0, d10: 0, d50: 0, d90: 0, span: 0 });
+
+  // Status
   const [status, setStatus] = useState("Sube una imagen y detecta el aro para calibrar la escala.");
 
-  // ---------- Drawing helpers ----------
+  // -------- Helpers de geometría --------
+  function normRect(x0, y0, x1, y1) {
+    const x = Math.min(x0, x1), y = Math.min(y0, y1);
+    return { x, y, w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
+  }
   function fitView() {
     const c = canvasRef.current;
     if (!c || !img) return;
@@ -78,9 +93,9 @@ export default function App() {
     return { x: ix * z + view.current.ox, y: iy * z + view.current.oy };
   }
 
+  // -------- Dibujo principal --------
   function draw() {
-    const c = canvasRef.current;
-    if (!c) return;
+    const c = canvasRef.current; if (!c) return;
     const g = c.getContext("2d");
     g.clearRect(0, 0, c.width, c.height);
     if (!img) return;
@@ -111,35 +126,54 @@ export default function App() {
       }
     }
 
-    // ROI/exclusions
+    // ROI
     if (roi) {
       g.save(); g.strokeStyle = "#10b981"; g.lineWidth = 2 / view.current.zoom;
       g.strokeRect(roi.x, roi.y, roi.w, roi.h); g.restore();
     }
+
+    // Exclusiones
     if (excls?.length) {
       g.save(); g.fillStyle = "rgba(239,68,68,0.25)"; g.strokeStyle = "#ef4444"; g.lineWidth = 2 / view.current.zoom;
       excls.forEach(r => { g.fillRect(r.x, r.y, r.w, r.h); g.strokeRect(r.x, r.y, r.w, r.h); });
       g.restore();
     }
 
-    // rim + scale
+    // Cuadro temporal (ROI o exclude) mientras dibujas
+    if (drawBox.current) {
+      const r = drawBox.current;
+      g.save();
+      g.setLineDash([6 / view.current.zoom, 4 / view.current.zoom]);
+      g.strokeStyle = mode === "roi" ? "#10b981" : "#ef4444";
+      g.lineWidth = 2 / view.current.zoom;
+      g.strokeRect(r.x, r.y, r.w, r.h);
+      g.restore();
+    }
+
+    // rim + escala
     if (rim) {
       g.save(); g.strokeStyle = "#111827"; g.lineWidth = 2 / view.current.zoom;
       g.beginPath(); g.arc(rim.cx, rim.cy, rim.r, 0, Math.PI * 2); g.stroke();
       const label = `${Number(customMM || basketMM)} mm · ${umPerPx ? umPerPx.toFixed(1) : "—"} µm/px`;
       g.fillStyle = "rgba(17,24,39,0.85)"; g.font = `${14 / view.current.zoom}px sans-serif`;
       g.fillText(label, rim.cx + 6 / view.current.zoom, rim.cy - 6 / view.current.zoom);
+      // handles en modo 'rim'
+      if (mode === "rim") {
+        const hh = 6 / view.current.zoom;
+        g.beginPath(); g.arc(rim.cx, rim.cy, hh, 0, Math.PI * 2); g.fill();
+        g.beginPath(); g.arc(rim.cx + rim.r, rim.cy, hh, 0, Math.PI * 2); g.fill();
+      }
       g.restore();
     }
 
-    // circles
+    // círculos equivalentes
     if (showCircles && particles?.length) {
       g.save(); g.strokeStyle = "#2563eb"; g.setLineDash([5 / view.current.zoom, 3 / view.current.zoom]); g.lineWidth = 1.5 / view.current.zoom;
       particles.forEach(p => { g.beginPath(); g.arc(p.cx, p.cy, p.r_px, 0, Math.PI * 2); g.stroke(); });
       g.setLineDash([]); g.restore();
     }
 
-    // contours
+    // contornos reales
     if (showContours && contoursPoly?.length) {
       g.save(); g.lineWidth = 1.5 / view.current.zoom;
       contoursPoly.forEach(cn => {
@@ -166,9 +200,9 @@ export default function App() {
     }
   }
 
-  useEffect(draw, [img, rim, roi, excls, maskOverlay, edgesOverlay, boundaryOverlay, particles, contoursPoly, showOverlays, showMask, showBoundary, showEdges, showContours, showCircles, overlayAlpha, viz, lensEnabled]);
+  useEffect(draw, [img, rim, roi, excls, maskOverlay, edgesOverlay, boundaryOverlay, particles, contoursPoly, showOverlays, showMask, showBoundary, showEdges, showContours, showCircles, overlayAlpha, viz, lensEnabled, mode]);
 
-  // ---------- Input: wheel / pan / lens ----------
+  // -------- Wheel / pan / lens --------
   function onWheel(e) {
     if (e && e.cancelable) e.preventDefault();
     const rect = canvasRef.current.getBoundingClientRect();
@@ -180,31 +214,81 @@ export default function App() {
     view.current.ox += x - after.x; view.current.oy += y - after.y;
     draw();
   }
-  const drag = useRef({ active: false, lastX: 0, lastY: 0 });
   function onPointerDown(e) {
     e.currentTarget.setPointerCapture?.(e.pointerId);
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    const im = worldToImage(x, y);
+
+    if (mode === "roi" || mode === "exclude") {
+      drawBox.current = { x: im.x, y: im.y, w: 0, h: 0 };
+      draw();
+      return;
+    }
+
+    if (mode === "rim" && rim) {
+      // click cerca del centro mueve; click cerca del borde ajusta r
+      const dc = Math.hypot(im.x - rim.cx, im.y - rim.cy);
+      const edge = Math.abs(dc - rim.r) < 12 ? "edge" : "center";
+      drag.current = { active: true, lastX: im.x, lastY: im.y, rimMode: edge };
+      return;
+    }
+
+    // pan o lens
     drag.current = { active: true, lastX: e.clientX, lastY: e.clientY };
     if (lensEnabled) {
-      const rect = canvasRef.current.getBoundingClientRect();
       lens.current.visible = true;
-      lens.current.sx = e.clientX - rect.left; lens.current.sy = e.clientY - rect.top;
-      const im = worldToImage(lens.current.sx, lens.current.sy); lens.current.imgx = im.x; lens.current.imgy = im.y;
+      lens.current.sx = x; lens.current.sy = y;
+      lens.current.imgx = im.x; lens.current.imgy = im.y;
       draw();
     }
   }
   function onPointerMove(e) {
-    if (drag.current.active) {
+    const rect = canvasRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left, y = e.clientY - rect.top;
+    const im = worldToImage(x, y);
+
+    if (drawBox.current && (mode === "roi" || mode === "exclude")) {
+      const r = normRect(drawBox.current.x, drawBox.current.y, im.x, im.y);
+      drawBox.current = r;
+      draw();
+      return;
+    }
+
+    if (drag.current.active && mode === "rim" && rim) {
+      if (drag.current.rimMode === "center") {
+        setRim(r => ({ ...r, cx: im.x, cy: im.y }));
+      } else {
+        const newR = Math.max(5, Math.hypot(im.x - rim.cx, im.y - rim.cy));
+        setRim(r => ({ ...r, r: newR }));
+      }
+      draw();
+      return;
+    }
+
+    if (drag.current.active && mode === "pan") {
       const dx = e.clientX - drag.current.lastX, dy = e.clientY - drag.current.lastY;
       drag.current.lastX = e.clientX; drag.current.lastY = e.clientY;
       view.current.ox += dx; view.current.oy += dy; draw();
     }
+
     if (lensEnabled && lens.current.visible) {
-      const rect = canvasRef.current.getBoundingClientRect();
-      lens.current.sx = e.clientX - rect.left; lens.current.sy = e.clientY - rect.top; draw();
+      lens.current.sx = x; lens.current.sy = y; draw();
     }
   }
   function onPointerUp(e) {
     e.currentTarget.releasePointerCapture?.(e.pointerId);
+
+    if (drawBox.current && (mode === "roi" || mode === "exclude")) {
+      const r = drawBox.current; drawBox.current = null;
+      if (r.w > 4 && r.h > 4) {
+        if (mode === "roi") setRoi(r);
+        else setExcls(prev => [...prev, r]);
+      }
+      draw();
+      return;
+    }
+
     drag.current.active = false;
     if (lensEnabled) { lens.current.visible = false; draw(); }
   }
@@ -215,7 +299,7 @@ export default function App() {
     const resize = () => {
       const holder = holderRef.current;
       const W = holder ? holder.clientWidth : window.innerWidth;
-      const H = Math.max(300, window.innerHeight - 160);
+      const H = Math.max(300, window.innerHeight - 240);
       c.width = Math.floor(W); c.height = Math.floor(H);
       if (img) fitView(); draw();
     };
@@ -235,7 +319,7 @@ export default function App() {
     };
   }, [img]);
 
-  // ---------- File load ----------
+  // -------- File load --------
   async function handleFile(e) {
     const f = e.target.files?.[0]; if (!f) return;
     const url = URL.createObjectURL(f);
@@ -244,14 +328,14 @@ export default function App() {
       imgRef.current = im; setImg(im);
       setRim(null); setRoi(null); setExcls([]);
       setMaskOverlay(null); setEdgesOverlay(null); setBoundaryOverlay(null);
-      setParticles([]); setContoursPoly([]); setSizes([]);
+      setParticles([]); setContoursPoly([]); setSizes([]); setResults({ N: 0, d10: 0, d50: 0, d90: 0, span: 0 });
       setStatus("Imagen cargada. Detecta el aro para calibrar la escala.");
       fitView(); draw(); URL.revokeObjectURL(url);
     };
     im.src = url;
   }
 
-  // ---------- Rim detection (Hough) ----------
+  // -------- Rim detection (Hough) --------
   function detectRim() {
     try {
       if (!window.cv || !img) { setStatus("OpenCV no disponible o imagen no cargada."); return; }
@@ -275,12 +359,12 @@ export default function App() {
         const micronsPerPx = (mm * 1000) / (2 * rimNew.r);
         setUmPerPx(micronsPerPx);
         setStatus(`Aro detectado. Escala: ${micronsPerPx.toFixed(1)} µm/px`);
-      } else setStatus("No se detectó aro. Ajusta la imagen o intenta manualmente.");
+      } else setStatus("No se detectó aro. Ajusta la imagen o intenta manualmente (modo Rim).");
       src.delete(); gray.delete(); blur.delete(); circles.delete();
     } catch (err) { console.error(err); setStatus("Error detectando aro (Hough)."); }
   }
 
-  // ---------- Analyze ----------
+  // -------- Analyze --------
   function analyze() {
     try {
       if (!window.cv || !img) { setStatus("OpenCV no disponible o imagen no cargada."); return; }
@@ -293,7 +377,6 @@ export default function App() {
       const ry = roi ? Math.max(0, Math.floor(roi.y)) : 0;
       const rw = roi ? Math.min(img.width - rx, Math.floor(roi.w)) : img.width;
       const rh = roi ? Math.min(img.height - ry, Math.floor(roi.h)) : img.height;
-      const localOff = { x: rx, y: ry };
 
       const srcFull = new window.cv.Mat(img.height, img.width, window.cv.CV_8UC4);
       const tmpCanvas = document.createElement("canvas"); tmpCanvas.width = img.width; tmpCanvas.height = img.height;
@@ -304,27 +387,18 @@ export default function App() {
       // Gray → (CLAHE || equalizeHist) → Blur
       const gray = new window.cv.Mat();
       window.cv.cvtColor(src, gray, window.cv.COLOR_RGBA2GRAY, 0);
-
-      // Robust CLAHE usage
       const tile = new window.cv.Size(8, 8);
       let didCLAHE = false;
       try {
         if (typeof window.cv.createCLAHE === "function") {
           const clahe = window.cv.createCLAHE(2.0, tile);
-          clahe.apply(gray, gray);
-          clahe.delete();
-          didCLAHE = true;
+          clahe.apply(gray, gray); clahe.delete(); didCLAHE = true;
         } else if (typeof window.cv.CLAHE !== "undefined") {
           const clahe = new window.cv.CLAHE(2.0, tile);
-          clahe.apply(gray, gray);
-          clahe.delete();
-          didCLAHE = true;
+          clahe.apply(gray, gray); clahe.delete(); didCLAHE = true;
         }
-      } catch (_) { /* fall back below */ }
-      if (!didCLAHE) {
-        // Fallback global equalize if CLAHE unavailable
-        window.cv.equalizeHist(gray, gray);
-      }
+      } catch(_) {}
+      if (!didCLAHE) window.cv.equalizeHist(gray, gray);
 
       const blur = new window.cv.Mat();
       window.cv.GaussianBlur(gray, blur, new window.cv.Size(3, 3), 0, 0, window.cv.BORDER_DEFAULT);
@@ -333,7 +407,7 @@ export default function App() {
       const bin = new window.cv.Mat();
       window.cv.adaptiveThreshold(blur, bin, 255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY_INV, 35, 5);
 
-      // Exclusions
+      // Exclusiones dentro de ROI
       if (excls?.length) {
         excls.forEach(r => {
           const xx = Math.max(0, Math.floor(r.x - rx));
@@ -373,9 +447,9 @@ export default function App() {
       const boundaryRGBA = new window.cv.Mat(); window.cv.cvtColor(boundary, boundaryRGBA, window.cv.COLOR_GRAY2RGBA, 0);
       for (let y = 0; y < boundaryRGBA.rows; y++) for (let x = 0; x < boundaryRGBA.cols; x++) {
         const a = boundaryRGBA.ucharPtr(y, x); if (a[0] > 0) { a[0] = 16; a[1] = 185; a[2] = 129; a[3] = 255; } else { a[3] = 0; }
-      } // verde (combina con contornos aceptados)
+      } // verde
 
-      // Overlay canvases (sync)
+      // Overlay canvases
       const cm = document.createElement("canvas"); cm.width = maskRGBA.cols; cm.height = maskRGBA.rows; window.cv.imshow(cm, maskRGBA);
       setMaskOverlay({ canvas: cm, x: rx, y: ry, w: maskRGBA.cols, h: maskRGBA.rows });
       const ce = document.createElement("canvas"); ce.width = edgesRGBA.cols; ce.height = edgesRGBA.rows; window.cv.imshow(ce, edgesRGBA);
@@ -383,7 +457,7 @@ export default function App() {
       const cb = document.createElement("canvas"); cb.width = boundaryRGBA.cols; cb.height = boundaryRGBA.rows; window.cv.imshow(cb, boundaryRGBA);
       setBoundaryOverlay({ canvas: cb, x: rx, y: ry, w: boundaryRGBA.cols, h: boundaryRGBA.rows });
 
-      // Contours from opened
+      // Contours
       const contours = new window.cv.MatVector(); const hier = new window.cv.Mat();
       window.cv.findContours(opened, contours, hier, window.cv.RETR_EXTERNAL, window.cv.CHAIN_APPROX_SIMPLE);
 
@@ -393,7 +467,7 @@ export default function App() {
         const area = window.cv.contourArea(cnt); if (area < 3) continue;
         const m = window.cv.moments(cnt); const cx = m.m10 / (m.m00 || 1); const cy = m.m01 / (m.m00 || 1);
 
-        // exclude by excls
+        // excluir por excls en coordenadas de ROI
         let bad = false;
         for (const r of excls) {
           if (cx >= r.x - rx && cx <= r.x - rx + r.w && cy >= r.y - ry && cy <= r.y - ry + r.h) { bad = true; break; }
@@ -433,17 +507,20 @@ export default function App() {
       } else polys = polysAll.map(poly => ({ ...poly, accepted: false }));
       setContoursPoly(polys);
 
-      // D10/50/90
-      let med = 0, p10 = 0, p90 = 0;
-      if (filtered.length) {
+      // D10/50/90 + span
+      let d50 = 0, d10 = 0, d90 = 0, span = 0, N = filtered.length;
+      if (N) {
         const sorted = [...filtered].sort((a, b) => a - b);
-        med = quantile(sorted, 0.5); p10 = quantile(sorted, 0.1); p90 = quantile(sorted, 0.9);
+        d50 = quantile(sorted, 0.5); d10 = quantile(sorted, 0.1); d90 = quantile(sorted, 0.9);
+        span = d10 > 0 ? d90 / d10 : 0;
       }
+      setResults({ N, d10, d50, d90, span });
+
       setViz("mask"); setShowOverlays(true);
       setShowMask(true); setShowBoundary(true); setShowEdges(true); setShowContours(true); setShowCircles(false);
 
-      setStatus(filtered.length
-        ? `Listo. N=${filtered.length} | D50=${med.toFixed(1)} µm | D10=${p10.toFixed(1)} µm | D90=${p90.toFixed(1)} µm`
+      setStatus(N
+        ? `Listo. N=${N} | D50=${d50.toFixed(1)} µm`
         : "No se detectaron partículas claras. Ajusta ROI/Exclusiones, enfoque/contraste.");
 
       // cleanup
@@ -454,7 +531,7 @@ export default function App() {
     } catch (err) { console.error(err); setStatus("Error en el análisis."); }
   }
 
-  // ---------- Utils: IQR / quantile ----------
+  // -------- Utils: IQR / quantile --------
   function iqrFilter(arr) {
     if (!arr?.length) return [];
     const a = [...arr].sort((x, y) => x - y);
@@ -470,7 +547,50 @@ export default function App() {
       : sortedAsc[base];
   }
 
-  // ---------- Presets ----------
+  // -------- Histograma simple (sin libs) --------
+  const histRef = useRef(null);
+  useEffect(() => {
+    const c = histRef.current; if (!c) return;
+    const g = c.getContext("2d");
+    g.clearRect(0, 0, c.width, c.height);
+    const data = sizes;
+    if (!data?.length) return;
+
+    const W = c.width, H = c.height, pad = 24;
+    const bins = Math.max(10, Math.min(48, Math.ceil(Math.sqrt(data.length))));
+    const min = Math.min(...data), max = Math.max(...data);
+    const bw = (max - min) / bins || 1;
+    const counts = Array(bins).fill(0);
+    data.forEach(v => {
+      let k = Math.floor((v - min) / bw);
+      if (k < 0) k = 0; if (k >= bins) k = bins - 1;
+      counts[k]++;
+    });
+    const maxC = Math.max(...counts);
+
+    // ejes
+    g.strokeStyle = "#9ca3af"; g.lineWidth = 1; g.beginPath();
+    g.moveTo(pad, H - pad); g.lineTo(W - pad, H - pad);
+    g.moveTo(pad, H - pad); g.lineTo(pad, pad); g.stroke();
+
+    // barras
+    const plotW = W - pad * 2, plotH = H - pad * 2;
+    const pxPerBin = plotW / bins;
+    g.fillStyle = "rgba(37,99,235,0.35)";
+    counts.forEach((cV, i) => {
+      const h = maxC ? (cV / maxC) * plotH : 0;
+      const x = pad + i * pxPerBin;
+      g.fillRect(x, H - pad - h, Math.max(1, pxPerBin - 2), h);
+    });
+
+    // etiquetas min/max
+    g.fillStyle = "#374151"; g.font = "12px sans-serif";
+    g.fillText(`${min.toFixed(0)}µm`, pad, H - 4);
+    const txt = `${max.toFixed(0)}µm`;
+    g.fillText(txt, W - pad - g.measureText(txt).width, H - 4);
+  }, [sizes]);
+
+  // -------- Presets --------
   useEffect(() => {
     if (overlayPreset === "todos") {
       setShowMask(true); setShowBoundary(true); setShowEdges(true); setShowContours(true); setShowCircles(true);
@@ -485,7 +605,7 @@ export default function App() {
     }
   }, [overlayPreset]);
 
-  // ---------- UI ----------
+  // -------- UI --------
   return (
     <div className="max-w-7xl mx-auto p-4 bg-white text-gray-900 min-h-screen">
       <header className="flex flex-wrap items-center gap-3">
@@ -513,6 +633,26 @@ export default function App() {
           Analizar
         </button>
 
+        {/* Herramientas */}
+        <div className="ml-2 flex flex-wrap items-center gap-2 text-sm">
+          <span className="text-gray-600 mr-1">Herramienta:</span>
+          <ToolBtn label="Pan" active={mode==='pan'} onClick={()=>setMode('pan')} />
+          <ToolBtn label="ROI" active={mode==='roi'} onClick={()=>setMode('roi')} />
+          <ToolBtn label="Excluir" active={mode==='exclude'} onClick={()=>setMode('exclude')} />
+          <ToolBtn label="Rim" active={mode==='rim'} onClick={()=>setMode('rim')} />
+          <button
+            onClick={()=> setExcls([])}
+            className="px-2 py-1 rounded border text-sm"
+            title="Limpiar exclusiones"
+          >Limpiar excl.</button>
+          <button
+            onClick={()=> setExcls(prev => prev.slice(0,-1))}
+            className="px-2 py-1 rounded border text-sm"
+            title="Borrar última exclusión"
+          >Undo excl.</button>
+        </div>
+
+        {/* Lupa */}
         <label className="inline-flex items-center gap-2 text-sm ml-2">
           <input type="checkbox" checked={lensEnabled} onChange={(e) => setLensEnabled(e.target.checked)} />
           <span>Lupa</span>
@@ -567,18 +707,52 @@ export default function App() {
 
       <p className="mt-2 text-sm text-gray-600">{status}</p>
 
-      <div ref={holderRef} className="relative w-full mt-3">
-        <canvas
-          ref={canvasRef}
-          // NOTA: sin onWheel aquí; lo enganchamos con addEventListener({passive:false})
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={onPointerUp}
-          onPointerLeave={onPointerUp}
-          className="rounded bg-gray-100 w-full border border-gray-300"
-          style={{ display: "block" }}
-        />
+      {/* Main area */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mt-3">
+        <div className="lg:col-span-2">
+          <div ref={holderRef} className="relative w-full">
+            <canvas
+              ref={canvasRef}
+              // sin onWheel aquí; listeners con passive:false en useLayoutEffect
+              onPointerDown={onPointerDown}
+              onPointerMove={onPointerMove}
+              onPointerUp={onPointerUp}
+              onPointerLeave={onPointerUp}
+              className="rounded bg-gray-100 w-full border border-gray-300"
+              style={{ display: "block" }}
+            />
+          </div>
+        </div>
+
+        {/* Panel de resultados */}
+        <div className="border rounded p-3">
+          <h2 className="font-semibold mb-2">Resultados</h2>
+          <ul className="text-sm space-y-1">
+            <li><span className="text-gray-600">N partículas:</span> {results.N}</li>
+            <li><span className="text-gray-600">D10:</span> {results.N ? results.d10.toFixed(1) : "—"} µm</li>
+            <li><span className="text-gray-600">D50 (mediana):</span> {results.N ? results.d50.toFixed(1) : "—"} µm</li>
+            <li><span className="text-gray-600">D90:</span> {results.N ? results.d90.toFixed(1) : "—"} µm</li>
+            <li><span className="text-gray-600">Span D90/D10:</span> {results.N && results.d10>0 ? (results.span).toFixed(2) : "—"}</li>
+            <li><span className="text-gray-600">Escala:</span> {umPerPx ? `${umPerPx.toFixed(1)} µm/px` : "—"}</li>
+          </ul>
+
+          <h3 className="font-semibold mt-3 mb-1">Histograma</h3>
+          <canvas ref={histRef} width={320} height={140} className="border rounded bg-white" />
+          <p className="text-xs text-gray-500 mt-2">El histograma usa las partículas tras filtro IQR.</p>
+        </div>
       </div>
     </div>
+  );
+}
+
+/* ---- Botón de herramienta ---- */
+function ToolBtn({ label, active, onClick }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`px-2 py-1 rounded border text-sm ${active ? "bg-indigo-600 text-white" : "bg-white"}`}
+    >
+      {label}
+    </button>
   );
 }
