@@ -1,19 +1,15 @@
-export function percentile(arr, p) {
-  if (!arr.length) return 0;
-  const sorted = [...arr].sort((a,b)=>a-b);
-  const idx = (p/100)*(sorted.length-1);
-  const lower = Math.floor(idx), upper = Math.ceil(idx);
-  if (lower === upper) return sorted[lower];
-  const w = idx - lower;
-  return sorted[lower]*(1-w)+sorted[upper]*w;
+export const clamp=(v,min,max)=>Math.max(min,Math.min(max,v));
+export function percentile(arr, p){
+  if(!arr.length) return 0;
+  const a=[...arr].sort((x,y)=>x-y);
+  const i=(p/100)*(a.length-1);
+  const lo=Math.floor(i), hi=Math.ceil(i);
+  if(lo===hi) return a[lo];
+  const w=i-lo; return a[lo]*(1-w)+a[hi]*w;
 }
-
-export function iqrFilter(values) {
-  if (values.length < 4) return values;
-  const q1 = percentile(values, 25);
-  const q3 = percentile(values, 75);
-  const iqr = q3 - q1;
-  const lower = q1 - 1.5*iqr;
-  const upper = q3 + 1.5*iqr;
-  return values.filter(v => v >= lower && v <= upper);
+export function iqrFilter(values){
+  if(values.length<4) return values;
+  const q1=percentile(values,25), q3=percentile(values,75);
+  const iqr=q3-q1, lo=q1-1.5*iqr, hi=q3+1.5*iqr;
+  return values.filter(v=>v>=lo && v<=hi);
 }
