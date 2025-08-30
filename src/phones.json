@@ -1,0 +1,104 @@
+[
+  {
+    "brand": "Apple",
+    "model": "iPhone 15 Pro",
+    "sensor_pixel_pitch_um": 1.12,
+    "note": "Main 48MP (quad-bayer 1.12µm effective); EXIF focal length ~24mm eq."
+  },
+  {
+    "brand": "Apple",
+    "model": "iPhone 14 Pro",
+    "sensor_pixel_pitch_um": 1.22,
+    "note": "Main 48MP (quad-bayer 1.22µm)"
+  },
+  {
+    "brand": "Apple",
+    "model": "iPhone 13",
+    "sensor_pixel_pitch_um": 1.7,
+    "note": "12MP 1.7µm class binned"
+  },
+  {
+    "brand": "Google",
+    "model": "Pixel 8 Pro",
+    "sensor_pixel_pitch_um": 1.12,
+    "note": "50MP quad pixel"
+  },
+  {
+    "brand": "Google",
+    "model": "Pixel 7",
+    "sensor_pixel_pitch_um": 1.2,
+    "note": "50MP quad pixel"
+  },
+  {
+    "brand": "Samsung",
+    "model": "Galaxy S24 Ultra",
+    "sensor_pixel_pitch_um": 0.8,
+    "note": "200MP 0.6-0.8µm class; bins 16:1"
+  },
+  {
+    "brand": "Samsung",
+    "model": "Galaxy S23",
+    "sensor_pixel_pitch_um": 1.0,
+    "note": "50MP 1.0µm"
+  },
+  {
+    "brand": "Xiaomi",
+    "model": "13 Pro",
+    "sensor_pixel_pitch_um": 1.6,
+    "note": "1-inch type sensor (binned)"
+  },
+  {
+    "brand": "Huawei",
+    "model": "P60 Pro",
+    "sensor_pixel_pitch_um": 1.0,
+    "note": "~48MP"
+  },
+  {
+    "brand": "OnePlus",
+    "model": "11",
+    "sensor_pixel_pitch_um": 1.12,
+    "note": "50MP"
+  },
+  {
+    "brand": "Motorola",
+    "model": "Edge 40",
+    "sensor_pixel_pitch_um": 1.0,
+    "note": "50MP"
+  },
+  {
+    "brand": "Sony",
+    "model": "Xperia 1 V",
+    "sensor_pixel_pitch_um": 1.12,
+    "note": "48/50MP"
+  },
+  {
+    "brand": "Apple",
+    "model": "iPhone SE (2022)",
+    "sensor_pixel_pitch_um": 1.22,
+    "note": "12MP 1.22µm"
+  },
+  {
+    "brand": "Google",
+    "model": "Pixel 5",
+    "sensor_pixel_pitch_um": 1.4,
+    "note": "12.2MP 1.4µm"
+  },
+  {
+    "brand": "Samsung",
+    "model": "Galaxy S21",
+    "sensor_pixel_pitch_um": 1.8,
+    "note": "12MP 1.8µm"
+  },
+  {
+    "brand": "Xiaomi",
+    "model": "Mi 11",
+    "sensor_pixel_pitch_um": 0.8,
+    "note": "108MP 0.8µm (binned)"
+  },
+  {
+    "brand": "Apple",
+    "model": "iPhone 11",
+    "sensor_pixel_pitch_um": 1.4,
+    "note": "12MP 1.4µm"
+  }
+]
