@@ -15,7 +15,7 @@ export default function App(){
   const [cvReady,setCvReady]=useState(false)
 
   const view=useRef({zoom:1, ox:0, oy:0})
-  const [mode,setMode]=useState('roi')
+  const [mode,setMode]=useState('pan')
   const [roi,setRoi]=useState(null)
   const [excls,setExcls]=useState([])
   const drag=useRef(null)
@@ -31,9 +31,9 @@ export default function App(){
   const [overlayAlpha,setOverlayAlpha]=useState(0.55)
   const [showDiscarded,setShowDiscarded]=useState(true)
 
-  const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'none'
-  const [maskOverlay,setMaskOverlay]=useState(null) // {image,x,y,w,h}
-  const [edgesOverlay,setEdgesOverlay]=useState(null) // {image,x,y,w,h}
+  const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'all' | 'none'
+  const [maskOverlay,setMaskOverlay]=useState(null) // {element,x,y,w,h}
+  const [edgesOverlay,setEdgesOverlay]=useState(null) // {element,x,y,w,h}
   const [contoursPoly,setContoursPoly]=useState([]) // [{pts:[{x,y},...], accepted:true, cx, cy}]
   const [particleRecords,setParticleRecords]=useState([]) // rows for CSV
 
@@ -41,7 +41,7 @@ export default function App(){
   const [iumParts,setIumParts]=useState(null)
 
   // Magnifier
-  const [lensEnabled,setLensEnabled]=useState(true)
+  const [lensEnabled,setLensEnabled]=useState(false)
   const [lensFactor,setLensFactor]=useState(3)
   const [lensRadius,setLensRadius]=useState(90)
   const lens=useRef({sx:0,sy:0,imgx:0,imgy:0,visible:false})
@@ -110,20 +110,20 @@ export default function App(){
     g.scale(view.current.zoom, view.current.zoom)
     g.drawImage(img,0,0)
 
-    if((showOverlays || viz==='mask' || viz==='edges') && viz!=='none'){
-      if(viz==='mask' && maskOverlay){
-        const im=new Image(); im.src=maskOverlay.url
-        g.save(); g.globalAlpha=overlayAlpha; g.drawImage(im, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore()
-      } else if(viz==='edges' && edgesOverlay){
-        const im=new Image(); im.src=edgesOverlay.url
-        g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.25); g.drawImage(im, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore()
+    if(showOverlays && viz!=='none'){
+      if((viz==='mask' || viz==='all') && maskOverlay){
+        const el=maskOverlay.element
+        g.save(); g.globalAlpha=overlayAlpha; g.drawImage(el, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore()
+      }
+      if((viz==='edges' || viz==='all') && edgesOverlay){
+        const el=edgesOverlay.element
+        g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.25); g.drawImage(el, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore()
       }
     }
 
     if(showOverlays){
       if(roi){ g.save(); g.strokeStyle='#10b981'; g.lineWidth=2/view.current.zoom; g.strokeRect(roi.x,roi.y,roi.w,roi.h); g.restore() }
-      if(excls.length){ g.save(); g.fillStyle='rgba(239,68,68,0.25)'; g.strokeStyle='#ef4444'; g.lineWidth=2/view.current.zoom;
-        excls.forEach(r=>{ g.fillRect(r.x,r.y,r.w,r.h); g.strokeRect(r.x,r.y,r.w,r.h) }); g.restore() }
+      if(excls.length){ g.save(); g.fillStyle='rgba(239,68,68,0.25)'; g.strokeStyle='#ef4444'; g.lineWidth=2/view.current.zoom; excls.forEach(r=>{ g.fillRect(r.x,r.y,r.w,r.h); g.strokeRect(r.x,r.y,r.w,r.h) }); g.restore() }
       if(rim){ g.save(); g.strokeStyle='#2563eb'; g.lineWidth=2/view.current.zoom; g.beginPath(); g.arc(rim.cx,rim.cy,rim.r,0,Math.PI*2); g.stroke();
         const mmVal = Number(customMM || basketMM)
         const label=`${mmVal} mm · ${umPerPx? umPerPx.toFixed(1):'—'} µm/px`
@@ -132,11 +132,12 @@ export default function App(){
         g.fillStyle='#2563eb'; g.beginPath(); g.arc(rim.cx,rim.cy,hr,0,Math.PI*2); g.fill()
         g.beginPath(); g.arc(rim.cx+rim.r,rim.cy,hr,0,Math.PI*2); g.fill()
         g.restore() }
-      if(viz==='circles' && particles.length){
+      if((viz==='circles' || viz==='all') && particles.length){
         g.save(); g.strokeStyle='#f59e0b'; g.lineWidth=1.5/view.current.zoom;
         particles.forEach(p=>{ g.beginPath(); g.arc(p.cx,p.cy,p.r_px,0,Math.PI*2); g.stroke() })
         g.restore()
-      } else if(viz==='contours' && contoursPoly.length){
+      }
+      if((viz==='contours' || viz==='all') && contoursPoly.length){
         g.save(); g.lineWidth=1.5/view.current.zoom;
         contoursPoly.forEach(cn=>{
           const pts=cn.pts; if(!pts||pts.length<2) return
@@ -152,6 +153,14 @@ export default function App(){
       }
     }
     g.restore()
+
+    g.save()
+    g.strokeStyle='#f59e0b55'
+    g.lineWidth=1
+    const y1=c.height/3, y2=(c.height*2)/3
+    g.beginPath(); g.moveTo(0,y1); g.lineTo(c.width,y1); g.moveTo(0,y2); g.lineTo(c.width,y2); g.stroke()
+    g.restore()
+
     drawLens(g)
   }
   useEffect(draw,[img,roi,excls,rim,particles,showOverlays,lensEnabled,lensFactor,lensRadius,viz,maskOverlay,edgesOverlay])
@@ -441,11 +450,11 @@ export default function App(){
       }
       const maskURL=(function(){ const c=document.createElement('canvas'); c.width=maskRGBA.cols; c.height=maskRGBA.rows; window.cv.imshow(c, maskRGBA); const u=c.toDataURL('image/png'); c.width=1; c.height=1; return u; })()
       const edgesURL=(function(){ const c=document.createElement('canvas'); c.width=edgesRGBA.cols; c.height=edgesRGBA.rows; window.cv.imshow(c, edgesRGBA); const u=c.toDataURL('image/png'); c.width=1; c.height=1; return u; })()
-      const imgMask=new Image(); imgMask.onload=()=>{ setMaskOverlay({image:imgMask, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows}); draw() }; imgMask.src=maskURL
+      const imgMask=new Image(); imgMask.onload=()=>{ setMaskOverlay({element:imgMask, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows}); draw() }; imgMask.src=maskURL
       // Fallback: build from canvas (no async)
-      try{ const cm=document.createElement('canvas'); cm.width=maskRGBA.cols; cm.height=maskRGBA.rows; window.cv.imshow(cm, maskRGBA); setMaskOverlay({canvas:cm, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows}) }catch(_){}
-      const imgEdges=new Image(); imgEdges.onload=()=>{ setEdgesOverlay({image:imgEdges, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}); draw() }; imgEdges.src=edgesURL
-      try{ const ce=document.createElement('canvas'); ce.width=edgesRGBA.cols; ce.height=edgesRGBA.rows; window.cv.imshow(ce, edgesRGBA); setEdgesOverlay({canvas:ce, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}) }catch(_){}
+      try{ const cm=document.createElement('canvas'); cm.width=maskRGBA.cols; cm.height=maskRGBA.rows; window.cv.imshow(cm, maskRGBA); setMaskOverlay({element:cm, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows}) }catch(_){}
+      const imgEdges=new Image(); imgEdges.onload=()=>{ setEdgesOverlay({element:imgEdges, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}); draw() }; imgEdges.src=edgesURL
+      try{ const ce=document.createElement('canvas'); ce.width=edgesRGBA.cols; ce.height=edgesRGBA.rows; window.cv.imshow(ce, edgesRGBA); setEdgesOverlay({element:ce, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}) }catch(_){}
 
       const N=filtered.length
       const med=percentile(filtered,50), p10=percentile(filtered,10), p90=percentile(filtered,90)
@@ -496,34 +505,36 @@ export default function App(){
   function recenter(){ fitView() }
 
   return (
-    <div className="max-w-7xl mx-auto p-4">
+    <div className="max-w-7xl mx-auto p-4 text-yellow-100">
+      <img src="/logo.svg" alt="logo" className="h-10 mb-2" />
       <h1 className="text-2xl font-semibold mb-2">GrindSizer — Portafiltro (v2.4)</h1>
-      <p className="text-gray-600 mb-4">{status}</p>
+      <p className="text-yellow-400 mb-4">{status}</p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow p-3">
+        <div className="lg:col-span-2 bg-gray-900 rounded-2xl shadow p-3">
           <div className="flex flex-wrap items-center gap-2 mb-3">
             <label className="inline-flex items-center gap-2 text-sm">
               <span className="font-medium">Imagen</span>
               <input type="file" accept="image/*" onChange={onFile}/>
-            </label>
-            <button onClick={()=>setMode('pan')} className={`px-3 py-1 rounded ${mode==='pan'?'bg-blue-600 text-white':'bg-gray-100'}`}>Mover</button>
-            <button onClick={()=>setMode('roi')} className={`px-3 py-1 rounded ${mode==='roi'?'bg-blue-600 text-white':'bg-gray-100'}`}>ROI</button>
-            <button onClick={()=>setMode('exclude')} className={`px-3 py-1 rounded ${mode==='exclude'?'bg-pink-600 text-white':'bg-gray-100'}`}>Excluir</button>
-            <button onClick={()=>setExcls([])} className="px-3 py-1 rounded bg-pink-100">Limpiar exclusiones</button>
-            <button onClick={()=>setMode('calib')} className={`px-3 py-1 rounded ${mode==='calib'?'bg-blue-600 text-white':'bg-gray-100'}`}>Calibrar (3 puntos)</button>
-            <button onClick={autoDetect} className="px-3 py-1 rounded bg-emerald-600 text-white">Detectar Aro</button>
-            <button onClick={recenter} className="px-3 py-1 rounded bg-gray-200">Recentrar</button>
-            <div className="ml-auto flex items-center gap-2">
-              <label className="text-sm">Visualización
-                <select value={viz} onChange={e=>setViz(e.target.value)} className="ml-1 border rounded px-1 py-0.5 text-sm">
-                  <option value="circles">Partículas (círculos)</option>
-                  <option value="mask">Máscara (BW/ámbar)</option>
-                  <option value="edges">Bordes (Canny)</option>
-                  <option value="contours">Contornos reales</option>
-                  <option value="none">Ninguno</option>
-                </select>
               </label>
+              <button onClick={()=>setMode('pan')} className={`px-3 py-1 rounded ${mode==='pan'?'bg-yellow-600 text-black':'bg-gray-800'}`}>Mover</button>
+              <button onClick={()=>setMode('roi')} className={`px-3 py-1 rounded ${mode==='roi'?'bg-yellow-600 text-black':'bg-gray-800'}`}>ROI</button>
+              <button onClick={()=>setMode('exclude')} className={`px-3 py-1 rounded ${mode==='exclude'?'bg-yellow-700 text-black':'bg-gray-800'}`}>Excluir</button>
+              <button onClick={()=>setExcls([])} className="px-3 py-1 rounded bg-yellow-800 text-black">Limpiar exclusiones</button>
+              <button onClick={()=>setMode('calib')} className={`px-3 py-1 rounded ${mode==='calib'?'bg-yellow-600 text-black':'bg-gray-800'}`}>Calibrar (3 puntos)</button>
+              <button onClick={autoDetect} className="px-3 py-1 rounded bg-yellow-700 text-black">Detectar Aro</button>
+              <button onClick={recenter} className="px-3 py-1 rounded bg-gray-800">Recentrar</button>
+              <div className="ml-auto flex items-center gap-2">
+                <label className="text-sm">Visualización
+                  <select value={viz} onChange={e=>setViz(e.target.value)} className="ml-1 border rounded px-1 py-0.5 text-sm bg-gray-800">
+                    <option value="circles">Partículas (círculos)</option>
+                    <option value="mask">Máscara (BW/ámbar)</option>
+                    <option value="edges">Bordes (Canny)</option>
+                    <option value="contours">Contornos reales</option>
+                    <option value="all">Todos</option>
+                    <option value="none">Ninguno</option>
+                  </select>
+                </label>
               <label className="inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={showOverlays} onChange={e=>setShowOverlays(e.target.checked)}/><span>Overlays</span>
               </label>
@@ -545,51 +556,51 @@ export default function App(){
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
               onPointerLeave={onPointerLeave}
-              className="rounded bg-gray-200 w-full"
+                className="rounded bg-black w-full"
               style={{display:'block'}}
             />
           </div>
 
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <span className="text-sm text-gray-600">Escala (µm/px):</span>
+            <div className="mt-3 flex flex-wrap items-center gap-3">
+              <span className="text-sm text-yellow-400">Escala (µm/px):</span>
             <span className="text-sm font-semibold">{umPerPx? umPerPx.toFixed(2): '—'}</span>
             <div className="ml-auto flex items-center gap-2">
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={lensEnabled} onChange={e=>setLensEnabled(e.target.checked)} />
-                <span>Lupa</span>
-              </label>
-              <label className="text-sm">Factor
-                <select value={lensFactor} onChange={e=>setLensFactor(Number(e.target.value))} className="ml-1 border rounded px-1 py-0.5 text-sm">
-                  <option value={2}>2×</option>
-                  <option value={3}>3×</option>
-                  <option value={4}>4×</option>
-                </select>
-              </label>
-              <label className="text-sm">Radio
-                <input type="range" min="60" max="140" value={lensRadius} onChange={e=>setLensRadius(Number(e.target.value))} className="ml-1" />
-              </label>
+                <label className="inline-flex items-center gap-2 text-sm">
+                  <input type="checkbox" checked={lensEnabled} onChange={e=>setLensEnabled(e.target.checked)} />
+                  <span>Lupa</span>
+                </label>
+                <label className="text-sm">Factor
+                  <select value={lensFactor} onChange={e=>setLensFactor(Number(e.target.value))} className="ml-1 border rounded px-1 py-0.5 text-sm bg-gray-800">
+                    <option value={2}>2×</option>
+                    <option value={3}>3×</option>
+                    <option value={4}>4×</option>
+                  </select>
+                </label>
+                <label className="text-sm">Radio
+                  <input type="range" min="60" max="140" value={lensRadius} onChange={e=>setLensRadius(Number(e.target.value))} className="ml-1" />
+                </label>
+              </div>
+              <button onClick={analyze} className="px-3 py-1 rounded bg-yellow-600 text-black">Analizar</button>
+              <button onClick={exportCSV} disabled={!particleRecords.length} className={`px-3 py-1 rounded ${particleRecords.length? "bg-yellow-700 text-black":"bg-gray-800 text-gray-500"}`}>Exportar CSV</button>
             </div>
-            <button onClick={analyze} className="px-3 py-1 rounded bg-indigo-600 text-white">Analizar</button>
-            <button onClick={exportCSV} disabled={!particleRecords.length} className={`px-3 py-1 rounded ${particleRecords.length? "bg-green-600 text-white":"bg-gray-200 text-gray-500"}`}>Exportar CSV</button>
           </div>
-        </div>
 
-        <aside className="space-y-4">
-          <div className="bg-white rounded-2xl shadow p-3">
+          <aside className="space-y-4">
+            <div className="bg-gray-900 rounded-2xl shadow p-3">
             <h3 className="font-medium mb-2">Diámetro interno del canasto</h3>
             <div className="flex flex-wrap gap-2 mb-2">
-              {DEFAULT_BASKETS.map(mm=>(
-                <button key={mm} onClick={()=>{ setBasketMM(mm); setCustomMM(''); if(rim) { const um=(mm*1000)/(rim.r*2); setUmPerPx(um) } }} className={`px-2 py-1 rounded border ${basketMM===mm && !customMM ? 'bg-gray-900 text-white':'bg-white'}`}>{mm} mm</button>
-              ))}
+                {DEFAULT_BASKETS.map(mm=>(
+                  <button key={mm} onClick={()=>{ setBasketMM(mm); setCustomMM(''); if(rim) { const um=(mm*1000)/(rim.r*2); setUmPerPx(um) } }} className={`px-2 py-1 rounded border ${basketMM===mm && !customMM ? 'bg-yellow-600 text-black':'bg-gray-800'}`}>{mm} mm</button>
+                ))}
             </div>
             <div className="flex items-center gap-2">
-              <input value={customMM} onChange={e=>setCustomMM(e.target.value)} placeholder="Otro (mm)" className="w-28 border rounded px-2 py-1"/>
-              <button onClick={()=>{ const mm=Number(customMM)||basketMM; setBasketMM(mm); if(rim){ const um=(mm*1000)/(rim.r*2); setUmPerPx(um) } }} className="px-2 py-1 rounded bg-gray-100">Usar</button>
+              <input value={customMM} onChange={e=>setCustomMM(e.target.value)} placeholder="Otro (mm)" className="w-28 border rounded px-2 py-1 bg-gray-800"/>
+              <button onClick={()=>{ const mm=Number(customMM)||basketMM; setBasketMM(mm); if(rim){ const um=(mm*1000)/(rim.r*2); setUmPerPx(um) } }} className="px-2 py-1 rounded bg-gray-800">Usar</button>
             </div>
-            <p className="text-xs text-gray-600 mt-2">Ajusta el aro con el cursor: arrastra el centro o el radio. Usa “Mover” solo cuando quieras panear.</p>
-          </div>
+              <p className="text-xs text-yellow-400 mt-2">Ajusta el aro con el cursor: arrastra el centro o el radio. Cambia de modo cuando necesites ROI o exclusiones.</p>
+            </div>
 
-          <div className="bg-white rounded-2xl shadow p-3">
+            <div className="bg-gray-900 rounded-2xl shadow p-3">
             <h3 className="font-medium mb-2">Resultados</h3>
             {sizes.length? (
               <ul className="text-sm space-y-1">
@@ -598,34 +609,34 @@ export default function App(){
                 <li>D10 = <b>{percentile(sizes,10).toFixed(1)} µm</b></li>
                 <li>D90 = <b>{percentile(sizes,90).toFixed(1)} µm</b></li>
                 <li>Promedio = <b>{(sizes.reduce((a,b)=>a+b,0)/sizes.length).toFixed(1)} µm</b></li>
-              </ul>
-            ) : <p className="text-sm text-gray-600">Sin datos aún.</p>}
-          </div>
+                </ul>
+              ) : <p className="text-sm text-yellow-400">Sin datos aún.</p>}
+            </div>
 
-          <div className="bg-white rounded-2xl shadow p-3">
+            <div className="bg-gray-900 rounded-2xl shadow p-3">
             <h3 className="font-medium mb-2">Índice de Uniformidad de Molienda (IUM)</h3>
             {ium!==null ? (
               <div>
-                <p className="text-xl font-semibold">{ium} / 100</p>
-                <ul className="text-xs text-gray-700 mt-2 space-y-1">
+                  <p className="text-xl font-semibold">{ium} / 100</p>
+                  <ul className="text-xs text-yellow-200 mt-2 space-y-1">
                   <li>Uniformidad (D90/D10): <b>{(iumParts?.span||0).toFixed(2)}</b></li>
                   <li>Enfoque (σ Laplaciano): <b>{(iumParts?.focusStd||0).toFixed(1)}</b></li>
                   <li>Alineación borde/máscara: <b>{Math.round((iumParts?.edgeAlign||0)*100)}%</b></li>
                   <li>Solidez media: <b>{(iumParts?.solidity||0).toFixed(2)}</b></li>
                   <li>Tamaño de muestra (N): <b>{sizes.length}</b></li>
                 </ul>
-              </div>
-            ) : <p className="text-sm text-gray-600">Ejecuta “Analizar” para calcularlo.</p>}
-          </div>
-        </aside>
-      </div>
+                </div>
+              ) : <p className="text-sm text-yellow-400">Ejecuta “Analizar” para calcularlo.</p>}
+            </div>
+          </aside>
+        </div>
 
-      <section className="mt-6 bg-white rounded-2xl shadow p-3">
-        <h3 className="font-medium mb-3">Histograma</h3>
-        {dataHist? (
-          <Bar data={{labels:dataHist.labels, datasets:[{label:'Frecuencia', data:dataHist.counts}]}} options={{responsive:true, plugins:{legend:{display:false}}, scales:{x:{title:{display:true,text:'Tamaño (µm, inicio de bin)'}}, y:{title:{display:true,text:'Conteo'}}}}} />
-        ) : <p className="text-sm text-gray-600">Analiza para ver el histograma.</p>}
-      </section>
+        <section className="mt-6 bg-gray-900 rounded-2xl shadow p-3">
+          <h3 className="font-medium mb-3">Histograma</h3>
+          {dataHist? (
+            <Bar data={{labels:dataHist.labels, datasets:[{label:'Frecuencia', data:dataHist.counts}]}} options={{responsive:true, plugins:{legend:{display:false}}, scales:{x:{title:{display:true,text:'Tamaño (µm, inicio de bin)'}}, y:{title:{display:true,text:'Conteo'}}}}} />
+          ) : <p className="text-sm text-yellow-400">Analiza para ver el histograma.</p>}
+        </section>
     </div>
   )
 }
