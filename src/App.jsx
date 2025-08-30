@@ -2,8 +2,8 @@ import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 
 /**
  * Grind Analyzer – Portafiltro (paleta clara)
- * - ROI (área de estudio) y Exclusiones (añadir / borrar última / limpiar)
- * - Panel de Resultados + Histograma
+ * - ROI (área de estudio) y Exclusiones (añadir / borrar / limpiar)
+ * - Panel de Resultados + Histograma + Índice de precisión (0–100)
  * - Overlays opcionales (Máscara, Borde de máscara, Canny, Contornos, Círculos)
  * - Fix CLAHE (uso correcto o fallback equalizeHist)
  * - Fix passive listeners (wheel/touch con {passive:false})
@@ -20,7 +20,7 @@ export default function App() {
   const imgRef = useRef(null);
 
   // Analysis state
-  const [sizes, setSizes] = useState([]);               // µm
+  const [sizes, setSizes] = useState([]);               // µm (filtradas por IQR)
   const [particles, setParticles] = useState([]);       // [{cx,cy,r_px,r_um}]
   const [contoursPoly, setContoursPoly] = useState([]); // [{pts, accepted, cx, cy, d_um, ...}]
 
@@ -62,8 +62,12 @@ export default function App() {
   // Viz gate básico
   const [viz, setViz] = useState("mask");
 
-  // Results
-  const [results, setResults] = useState({ N: 0, d10: 0, d50: 0, d90: 0, span: 0 });
+  // Results + precisión
+  const [results, setResults] = useState({
+    N: 0, d10: 0, d50: 0, d90: 0, span: 0,
+    gsd: 0, cv: 0, iqrMd: 0, // métricas base
+    precision: 0             // 0–100
+  });
 
   // Status
   const [status, setStatus] = useState("Sube una imagen y detecta el aro para calibrar la escala.");
@@ -227,14 +231,12 @@ export default function App() {
     }
 
     if (mode === "rim" && rim) {
-      // click cerca del centro mueve; click cerca del borde ajusta r
       const dc = Math.hypot(im.x - rim.cx, im.y - rim.cy);
       const edge = Math.abs(dc - rim.r) < 12 ? "edge" : "center";
       drag.current = { active: true, lastX: im.x, lastY: im.y, rimMode: edge };
       return;
     }
 
-    // pan o lens
     drag.current = { active: true, lastX: e.clientX, lastY: e.clientY };
     if (lensEnabled) {
       lens.current.visible = true;
@@ -250,9 +252,7 @@ export default function App() {
 
     if (drawBox.current && (mode === "roi" || mode === "exclude")) {
       const r = normRect(drawBox.current.x, drawBox.current.y, im.x, im.y);
-      drawBox.current = r;
-      draw();
-      return;
+      drawBox.current = r; draw(); return;
     }
 
     if (drag.current.active && mode === "rim" && rim) {
@@ -262,8 +262,7 @@ export default function App() {
         const newR = Math.max(5, Math.hypot(im.x - rim.cx, im.y - rim.cy));
         setRim(r => ({ ...r, r: newR }));
       }
-      draw();
-      return;
+      draw(); return;
     }
 
     if (drag.current.active && mode === "pan") {
@@ -285,8 +284,7 @@ export default function App() {
         if (mode === "roi") setRoi(r);
         else setExcls(prev => [...prev, r]);
       }
-      draw();
-      return;
+      draw(); return;
     }
 
     drag.current.active = false;
@@ -328,7 +326,8 @@ export default function App() {
       imgRef.current = im; setImg(im);
       setRim(null); setRoi(null); setExcls([]);
       setMaskOverlay(null); setEdgesOverlay(null); setBoundaryOverlay(null);
-      setParticles([]); setContoursPoly([]); setSizes([]); setResults({ N: 0, d10: 0, d50: 0, d90: 0, span: 0 });
+      setParticles([]); setContoursPoly([]); setSizes([]);
+      setResults({ N: 0, d10: 0, d50: 0, d90: 0, span: 0, gsd: 0, cv: 0, iqrMd: 0, precision: 0 });
       setStatus("Imagen cargada. Detecta el aro para calibrar la escala.");
       fitView(); draw(); URL.revokeObjectURL(url);
     };
@@ -514,13 +513,21 @@ export default function App() {
         d50 = quantile(sorted, 0.5); d10 = quantile(sorted, 0.1); d90 = quantile(sorted, 0.9);
         span = d10 > 0 ? d90 / d10 : 0;
       }
-      setResults({ N, d10, d50, d90, span });
+
+      // === Precisión ===
+      const prec = computePrecisionMetrics(filtered, { d10, d50, d90, span });
+
+      setResults({
+        N, d10, d50, d90, span,
+        gsd: prec.gsd, cv: prec.cv, iqrMd: prec.iqrMd,
+        precision: prec.score
+      });
 
       setViz("mask"); setShowOverlays(true);
       setShowMask(true); setShowBoundary(true); setShowEdges(true); setShowContours(true); setShowCircles(false);
 
       setStatus(N
-        ? `Listo. N=${N} | D50=${d50.toFixed(1)} µm`
+        ? `Listo. N=${N} | D50=${d50.toFixed(1)} µm | Índice de precisión=${prec.score.toFixed(0)}/100`
         : "No se detectaron partículas claras. Ajusta ROI/Exclusiones, enfoque/contraste.");
 
       // cleanup
@@ -531,7 +538,7 @@ export default function App() {
     } catch (err) { console.error(err); setStatus("Error en el análisis."); }
   }
 
-  // -------- Utils: IQR / quantile --------
+  // -------- Utils: IQR / quantile / precision --------
   function iqrFilter(arr) {
     if (!arr?.length) return [];
     const a = [...arr].sort((x, y) => x - y);
@@ -546,6 +553,45 @@ export default function App() {
       ? sortedAsc[base] + rest * (sortedAsc[base + 1] - sortedAsc[base])
       : sortedAsc[base];
   }
+  function stdDev(a) {
+    if (!a?.length) return 0;
+    const n = a.length;
+    const mean = a.reduce((s,v)=>s+v,0) / n;
+    const varsum = a.reduce((s,v)=>s + (v-mean)*(v-mean), 0) / n; // poblacional
+    return Math.sqrt(varsum);
+  }
+  function computePrecisionMetrics(data, qs) {
+    const arr = (data || []).filter(v => v > 0);
+    if (!arr.length) return { score: 0, gsd: 0, cv: 0, iqrMd: 0 };
+
+    // cuantiles si no vienen
+    const sorted = [...arr].sort((a,b)=>a-b);
+    const d10 = qs?.d10 ?? quantile(sorted, 0.1);
+    const d50 = qs?.d50 ?? quantile(sorted, 0.5);
+    const d90 = qs?.d90 ?? quantile(sorted, 0.9);
+    const span = qs?.span ?? (d10>0 ? d90/d10 : 0);
+
+    // métricas base
+    const mean = arr.reduce((s,v)=>s+v,0)/arr.length;
+    const sd = stdDev(arr);
+    const cv = mean>0 ? sd/mean : 0;
+
+    const q1 = quantile(sorted, 0.25), q3 = quantile(sorted, 0.75);
+    const iqrMd = d50>0 ? (q3 - q1)/d50 : 0;
+
+    const logs = arr.map(v=>Math.log(v));
+    const sdLog = stdDev(logs);
+    const gsd = Math.exp(sdLog); // 1.0 = idealmente monodisperso
+
+    // componentes → [0,1], mayor = mejor
+    const s1 = clamp01((2.0 - Math.min(gsd, 2.0)) / (2.0 - 1.0));   // GSD: 1→1, 2→0
+    const s2 = clamp01(1 - (iqrMd / 0.8));                           // IQR/Md: 0.8→0
+    const s3 = clamp01(1 - ((Math.max(span,1) - 1) / 3));            // span 4→0
+
+    const score = Math.round(100 * (0.5*s1 + 0.3*s2 + 0.2*s3));
+    return { score, gsd, cv, iqrMd };
+  }
+  function clamp01(x){ return Math.max(0, Math.min(1, x)); }
 
   // -------- Histograma simple (sin libs) --------
   const histRef = useRef(null);
@@ -640,16 +686,8 @@ export default function App() {
           <ToolBtn label="ROI" active={mode==='roi'} onClick={()=>setMode('roi')} />
           <ToolBtn label="Excluir" active={mode==='exclude'} onClick={()=>setMode('exclude')} />
           <ToolBtn label="Rim" active={mode==='rim'} onClick={()=>setMode('rim')} />
-          <button
-            onClick={()=> setExcls([])}
-            className="px-2 py-1 rounded border text-sm"
-            title="Limpiar exclusiones"
-          >Limpiar excl.</button>
-          <button
-            onClick={()=> setExcls(prev => prev.slice(0,-1))}
-            className="px-2 py-1 rounded border text-sm"
-            title="Borrar última exclusión"
-          >Undo excl.</button>
+          <button onClick={()=> setExcls([])} className="px-2 py-1 rounded border text-sm" title="Limpiar exclusiones">Limpiar excl.</button>
+          <button onClick={()=> setExcls(prev => prev.slice(0,-1))} className="px-2 py-1 rounded border text-sm" title="Borrar última exclusión">Undo excl.</button>
         </div>
 
         {/* Lupa */}
@@ -733,12 +771,19 @@ export default function App() {
             <li><span className="text-gray-600">D50 (mediana):</span> {results.N ? results.d50.toFixed(1) : "—"} µm</li>
             <li><span className="text-gray-600">D90:</span> {results.N ? results.d90.toFixed(1) : "—"} µm</li>
             <li><span className="text-gray-600">Span D90/D10:</span> {results.N && results.d10>0 ? (results.span).toFixed(2) : "—"}</li>
-            <li><span className="text-gray-600">Escala:</span> {umPerPx ? `${umPerPx.toFixed(1)} µm/px` : "—"}</li>
+            <li className="mt-2"><span className="text-gray-600">GSD (σ<sub>g</sub>):</span> {results.N ? results.gsd.toFixed(3) : "—"}</li>
+            <li><span className="text-gray-600">CV (std/mean):</span> {results.N ? (results.cv*100).toFixed(1) : "—"}%</li>
+            <li><span className="text-gray-600">IQR/Md:</span> {results.N ? results.iqrMd.toFixed(3) : "—"}</li>
+            <li className="text-base font-semibold mt-1">
+              Índice de precisión: {results.N ? Math.round(results.precision) : "—"}/100
+            </li>
           </ul>
 
           <h3 className="font-semibold mt-3 mb-1">Histograma</h3>
           <canvas ref={histRef} width={320} height={140} className="border rounded bg-white" />
-          <p className="text-xs text-gray-500 mt-2">El histograma usa las partículas tras filtro IQR.</p>
+          <p className="text-xs text-gray-500 mt-2">
+            El índice combina GSD (log-normal), IQR/Md y Span; mayor es mejor (más uniforme).
+          </p>
         </div>
       </div>
     </div>
