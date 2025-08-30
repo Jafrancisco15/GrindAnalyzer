@@ -1,34 +1,22 @@
 # GrindSizer — Portafilter Grind Analyzer
 
-App web (Vite + React + OpenCV.js + Tailwind + Chart.js) para analizar el tamaño de molienda **desde una foto superior del portafiltro**. Usa el **diámetro interno del canasto** como referencia física para convertir píxeles a micrones con alta precisión, evitando reglas físicas.
+Analiza el tamaño de molienda **desde una foto superior del portafiltro** y convierte píxeles a micrones usando el **diámetro interno del canasto** como referencia física.
 
 ## Características
 - Carga una foto tomada con el móvil (idealmente sin flash, enfoque nítido).
-- Detección automática del aro interno (HoughCircles) o calibración manual con **3 clics** sobre el borde.
-- Selección de **ROI** con zoom/pan para analizar sólo áreas útiles (evita grumos).
-- Segmentación por contraste + **contornos** (OpenCV.js): tamaño equivalente circular de cada partícula.
-- Filtro de outliers (IQR), **D10 / D50 (mediana) / D90**, histograma y exportación **CSV**.
-- Selector de modelo de teléfono (DB semilla) y carga opcional de `phones-extended.json` con miles de modelos.
+- Detección automática del aro interno (HoughCircles) o calibración manual con **3 clics**.
+- **Zoom, pan, ROI** y **múltiples exclusiones** (rectángulos rojos) para obviar áreas borrosas/reflejos o grumos.
+- Segmentación con OpenCV.js y cálculo de **diámetro equivalente** por partícula → micrones.
+- Filtro IQR de outliers, **D10 / D50 / D90**, histograma y exportación **CSV**.
+- **Overlays**: círculo del aro (azul) y partículas detectadas (ámbar).
 
-## Cómo usar
+## Uso
 ```bash
 npm i
 npm run dev
-# despliega en Vercel sin cambios
 ```
+Despliegue listo para Vercel.
 
-Para una base de teléfonos más grande, crea un archivo en `public/phones-extended.json` con:
-```json
-[
-  {"brand":"Apple","model":"iPhone 15 Pro","sensor_pixel_pitch_um":1.12},
-  {"brand":"Samsung","model":"Galaxy S21","sensor_pixel_pitch_um":1.8}
-]
-```
-La app lo detecta y fusiona automáticamente.
-
-## Consejos de captura
-- Foto perpendicular al canasto, buena luz difusa, ISO bajo.
-- Extiende levemente la molienda para **evitar aglomerados** si quieres medir sólo partículas sueltas.
-- Selecciona una ROI uniforme y ejecuta **Analizar**.
-
-> Nota: el campo “Teléfono” es meta‑dato; la **escala real** proviene del diámetro interno del canasto (p. ej., 58.5 mm). Si usas canastos 54/53/51/49 mm, selecciónalos o ingresa un valor personalizado.
+## Consejos
+- Foto perpendicular, luz difusa, enfoque nítido. Extiende la molienda para reducir grumos si quieres medir solo partículas sueltas.
+- Selecciona una **ROI** y añade **exclusiones** para limpiar zonas confusas antes de analizar.

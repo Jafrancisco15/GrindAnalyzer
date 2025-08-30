@@ -2,9 +2,4 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --card: #ffffff;
-  --muted: #6b7280;
-}
-* { box-sizing: border-box; }
 canvas { image-rendering: crisp-edges; }
