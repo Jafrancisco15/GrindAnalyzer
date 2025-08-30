@@ -620,7 +620,7 @@ return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', re
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
               onPointerLeave={onPointerLeave}
-              className=\"rounded bg-gray-200 w-full border border-amber-500/40 bg-black\"
+              className="rounded bg-gray-200 w-full border border-amber-500/40 bg-black\"
               style={{display:'block'}}
             />
           </div>
