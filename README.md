@@ -19,11 +19,3 @@ npm run dev
 
 
 **Nuevo en v2.4**: modo *Contornos reales* y botón **Exportar CSV** (tamaños individuales y métricas por partícula).
-
-
-## v2.6
-- Tema **negro + amarillo**.
-- Pan por cursor **(default)**; lupa **off**.
-- Guías y flechas para subir/bajar/izq/der la imagen.
-- Selector de overlays **independiente** (Máscara, Borde, Canny, Contornos, Círculos) y presets (Auditar, Todos, etc.).
-- Overlays reconstruidos desde el **pipeline real**: `opened` (máscara), `boundary`, `Canny`, contornos y círculos equivalentes.
