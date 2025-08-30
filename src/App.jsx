@@ -29,9 +29,11 @@ export default function App(){
   const [particles,setParticles]=useState([])
   const [showOverlays,setShowOverlays]=useState(true)
 
-  const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'none'
+  const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'none'
   const [maskOverlay,setMaskOverlay]=useState(null)
   const [edgesOverlay,setEdgesOverlay]=useState(null)
+  const [contoursPoly,setContoursPoly]=useState([]) // [{pts:[{x,y},...], accepted:true, cx, cy}]
+  const [particleRecords,setParticleRecords]=useState([]) // rows for CSV
 
   const [ium,setIum]=useState(null)
   const [iumParts,setIumParts]=useState(null)
@@ -115,9 +117,22 @@ export default function App(){
         g.fillStyle='#2563eb'; g.beginPath(); g.arc(rim.cx,rim.cy,hr,0,Math.PI*2); g.fill()
         g.beginPath(); g.arc(rim.cx+rim.r,rim.cy,hr,0,Math.PI*2); g.fill()
         g.restore() }
-      if(viz==='circles' && particles.length){ g.save(); g.strokeStyle='#f59e0b'; g.lineWidth=1.5/view.current.zoom;
+      if(viz==='circles' && particles.length){
+        g.save(); g.strokeStyle='#f59e0b'; g.lineWidth=1.5/view.current.zoom;
         particles.forEach(p=>{ g.beginPath(); g.arc(p.cx,p.cy,p.r_px,0,Math.PI*2); g.stroke() })
-        g.restore() }
+        g.restore()
+      } else if(viz==='contours' && contoursPoly.length){
+        g.save(); g.strokeStyle='#f59e0b'; g.lineWidth=1.5/view.current.zoom; g.fillStyle='rgba(245,158,11,0.15)';
+        contoursPoly.forEach(cn=>{
+          if(!cn.accepted) return; // dibujar aceptados por IQR
+          const pts=cn.pts
+          if(!pts||pts.length<2) return
+          g.beginPath(); g.moveTo(pts[0].x, pts[0].y)
+          for(let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y) }
+          g.closePath(); g.fill(); g.stroke()
+        })
+        g.restore()
+      }
     }
     g.restore()
     drawLens(g)
@@ -146,7 +161,7 @@ export default function App(){
     image.onerror=()=>alert('No se pudo cargar la imagen.')
     image.src=URL.createObjectURL(f)
     setRoi(null); setExcls([]); setRim(null); setUmPerPx(null); setSizes([]); setParticles([]); setIum(null); setIumParts(null)
-    setMaskOverlay(null); setEdgesOverlay(null)
+    setMaskOverlay(null); setEdgesOverlay(null); setContoursPoly([]); setParticleRecords([])
     setStatus('Imagen cargada. Detecta el aro (auto) o calibra con 3 puntos; ajusta con el cursor.')
   }
 
@@ -382,7 +397,11 @@ export default function App(){
         const q1=percentile(sizesArr,25), q3=percentile(sizesArr,75), iqr=q3-q1, lo=q1-1.5*iqr, hi=q3+1.5*iqr
         finalPts=pts.filter(p=> (p.r_um*2)>=lo && (p.r_um*2)<=hi)
       }
-      setSizes(filtered); setParticles(finalPts)
+      setSizes(filtered); setParticles(finalPts);
+      // map acceptance by diameter filter
+      const accepted=finalPts.map(p=> (p.r_um*2))
+      const records=[]; const polys=polysAll.map(poly=>{ const ok = (poly.d_um>=Math.min(...filtered, Infinity) && poly.d_um<=Math.max(...filtered, -Infinity)); if(ok) records.push({cx_px:poly.cx, cy_px:poly.cy, d_um:poly.d_um, area_um2: poly.area_px*(umPerPx*umPerPx), per_um: poly.per_px*umPerPx, solidity: poly.solidity, circularity: poly.circularity}); return {...poly, accepted: ok} })
+      setContoursPoly(polys); setParticleRecords(records)
 
       # overlays
       const maskRGBA=new window.cv.Mat(); window.cv.cvtColor(maskVis, maskRGBA, window.cv.COLOR_GRAY2RGBA, 0)
@@ -439,11 +458,21 @@ export default function App(){
 
   useEffect(()=>{ draw() }, [lensEnabled,lensFactor,lensRadius])
 
+  function exportCSV(){
+    if(!particleRecords.length){ alert('No hay datos para exportar.'); return }
+    const header = ['id','cx_px','cy_px','d_eq_um','area_um2','perimetro_um','solidez','circularidad']
+    const rows = particleRecords.map((r,i)=>[i+1,r.cx_px.toFixed(2),r.cy_px.toFixed(2),r.d_um.toFixed(2),r.area_um2.toFixed(2),r.per_um.toFixed(2),r.solidity.toFixed(4),r.circularity.toFixed(4)])
+    const csv = [header.join(','), ...rows.map(r=>r.join(','))].join('\n')
+    const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'})
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href=url; a.download='grind_particles.csv'; a.click()
+    URL.revokeObjectURL(url)
+  }
   function recenter(){ fitView() }
 
   return (
     <div className="max-w-7xl mx-auto p-4">
-      <h1 className="text-2xl font-semibold mb-2">GrindSizer — Portafiltro (v2.3)</h1>
+      <h1 className="text-2xl font-semibold mb-2">GrindSizer — Portafiltro (v2.4)</h1>
       <p className="text-gray-600 mb-4">{status}</p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -466,6 +495,7 @@ export default function App(){
                   <option value="circles">Partículas (círculos)</option>
                   <option value="mask">Máscara (BW/ámbar)</option>
                   <option value="edges">Bordes (Canny)</option>
+                  <option value="contours">Contornos reales</option>
                   <option value="none">Ninguno</option>
                 </select>
               </label>
@@ -508,6 +538,7 @@ export default function App(){
               </label>
             </div>
             <button onClick={analyze} className="px-3 py-1 rounded bg-indigo-600 text-white">Analizar</button>
+            <button onClick={exportCSV} disabled={!particleRecords.length} className={`px-3 py-1 rounded ${particleRecords.length? "bg-green-600 text-white":"bg-gray-200 text-gray-500"}`}>Exportar CSV</button>
           </div>
         </div>
 
