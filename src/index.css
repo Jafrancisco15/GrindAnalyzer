@@ -2,3 +2,4 @@
 @tailwind components;
 @tailwind utilities;
 canvas{ touch-action: none; }
+canvas{ touch-action: none; overscroll-behavior: contain; }

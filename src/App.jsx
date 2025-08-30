@@ -67,6 +67,19 @@ export default function App(){
   },[img])
 
   useEffect(()=>{
+    const c = canvasRef.current
+    if(!c) return
+    const wheelHandler = (ev)=> onWheel(ev)
+    const touchMoveHandler = (ev)=> { if(ev && ev.cancelable) ev.preventDefault() }
+    c.addEventListener('wheel', wheelHandler, { passive: false })
+    c.addEventListener('touchmove', touchMoveHandler, { passive: false })
+    return ()=>{
+      c.removeEventListener('wheel', wheelHandler)
+      c.removeEventListener('touchmove', touchMoveHandler)
+    }
+  }, [img])
+
+  useEffect(()=>{
     const t=setInterval(()=>{ if(window.cv && window.cv.Mat){ setCvReady(true); clearInterval(t) } },200)
     return ()=>clearInterval(t)
   },[])
@@ -167,7 +180,7 @@ export default function App(){
 
   function onWheel(e){
     if(!img) return
-    e.preventDefault()
+    if(e && e.cancelable) e.preventDefault()
     const rect=canvasRef.current.getBoundingClientRect()
     const mx=e.clientX-rect.left, my=e.clientY-rect.top
     const before=screenToImage(mx,my)
@@ -372,7 +385,7 @@ export default function App(){
       }
       const edgeAlign = totalB? onEdge/totalB : 0
 
-      const sizesArr=[], pts=[]
+      const sizesArr=[], pts=[], polysAll=[]
       let soliditySum=0, solidityCount=0
       for(let i=0;i<contours.size();i++){
         const cnt=contours.get(i)
@@ -399,8 +412,12 @@ export default function App(){
       }
       setSizes(filtered); setParticles(finalPts);
       // map acceptance by diameter filter
-      const accepted=finalPts.map(p=> (p.r_um*2))
-      const records=[]; const polys=polysAll.map(poly=>{ const ok = (poly.d_um>=Math.min(...filtered, Infinity) && poly.d_um<=Math.max(...filtered, -Infinity)); if(ok) records.push({cx_px:poly.cx, cy_px:poly.cy, d_um:poly.d_um, area_um2: poly.area_px*(umPerPx*umPerPx), per_um: poly.per_px*umPerPx, solidity: poly.solidity, circularity: poly.circularity}); return {...poly, accepted: ok} })
+      const records=[];
+      let polys=[];
+      if(filtered.length){
+        const lo=Math.min(...filtered), hi=Math.max(...filtered)
+        polys = polysAll.map(poly=>{ const ok = (poly.d_um>=lo && poly.d_um<=hi); if(ok) records.push({cx_px:poly.cx, cy_px:poly.cy, d_um:poly.d_um, area_um2: poly.area_px*(umPerPx*umPerPx), per_um: poly.per_px*umPerPx, solidity: poly.solidity, circularity: poly.circularity}); return {...poly, accepted: ok} })
+      } else { polys = polysAll.map(poly=> ({...poly, accepted:false})) }
       setContoursPoly(polys); setParticleRecords(records)
 
       // overlays
