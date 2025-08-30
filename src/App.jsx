@@ -28,6 +28,8 @@ export default function App(){
   const [sizes,setSizes]=useState([])
   const [particles,setParticles]=useState([])
   const [showOverlays,setShowOverlays]=useState(true)
+  const [overlayAlpha,setOverlayAlpha]=useState(0.55)
+  const [showDiscarded,setShowDiscarded]=useState(true)
 
   const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'none'
   const [maskOverlay,setMaskOverlay]=useState(null) // {image,x,y,w,h}
@@ -108,13 +110,13 @@ export default function App(){
     g.scale(view.current.zoom, view.current.zoom)
     g.drawImage(img,0,0)
 
-    if(showOverlays && viz!=='none'){
+    if((showOverlays || viz==='mask' || viz==='edges') && viz!=='none'){
       if(viz==='mask' && maskOverlay){
         const im=new Image(); im.src=maskOverlay.url
-        g.save(); g.globalAlpha=0.45; g.drawImage(im, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore()
+        g.save(); g.globalAlpha=overlayAlpha; g.drawImage(im, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore()
       } else if(viz==='edges' && edgesOverlay){
         const im=new Image(); im.src=edgesOverlay.url
-        g.save(); g.globalAlpha=0.7; g.drawImage(im, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore()
+        g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.25); g.drawImage(im, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore()
       }
     }
 
@@ -135,14 +137,16 @@ export default function App(){
         particles.forEach(p=>{ g.beginPath(); g.arc(p.cx,p.cy,p.r_px,0,Math.PI*2); g.stroke() })
         g.restore()
       } else if(viz==='contours' && contoursPoly.length){
-        g.save(); g.strokeStyle='#f59e0b'; g.lineWidth=1.5/view.current.zoom; g.fillStyle='rgba(245,158,11,0.15)';
+        g.save(); g.lineWidth=1.5/view.current.zoom;
         contoursPoly.forEach(cn=>{
-          if(!cn.accepted) return; // dibujar aceptados por IQR
-          const pts=cn.pts
-          if(!pts||pts.length<2) return
-          g.beginPath(); g.moveTo(pts[0].x, pts[0].y)
-          for(let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y) }
-          g.closePath(); g.fill(); g.stroke()
+          const pts=cn.pts; if(!pts||pts.length<2) return
+          if(cn.accepted){
+            g.strokeStyle='#f59e0b'; g.fillStyle='rgba(245,158,11,0.15)'
+            g.beginPath(); g.moveTo(pts[0].x, pts[0].y); for(let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y) } g.closePath(); g.fill(); g.stroke()
+          } else if(showDiscarded){
+            g.strokeStyle='rgba(245,158,11,0.35)'; g.setLineDash([4/view.current.zoom, 3/view.current.zoom])
+            g.beginPath(); g.moveTo(pts[0].x, pts[0].y); for(let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y) } g.closePath(); g.stroke(); g.setLineDash([])
+          }
         })
         g.restore()
       }
@@ -458,7 +462,7 @@ export default function App(){
       src.delete(); gray.delete(); masked.delete(); cl.delete(); blur.delete(); bin.delete(); opened.delete(); kernel.delete(); contours.delete(); hier.delete(); mask.delete(); maskVis.delete(); edges.delete(); eroded.delete(); boundary.delete(); maskRGBA.delete(); edgesRGBA.delete()
 
       if(!filtered.length){ setStatus('No se detectaron partículas claras. Ajusta ROI/Exclusiones, aumenta contraste o mejora el enfoque. Sin partículas aceptadas, no se mostrará IUM ni overlays.'); return }
-      setViz('mask')
+      setShowOverlays(true); setViz('mask')
       setStatus(`Listo. N=${filtered.length} | D50=${med.toFixed(1)} µm | D10=${p10.toFixed(1)} µm | D90=${p90.toFixed(1)} µm · Cambia "Visualización" para ver máscara/bordes/contornos`)
     }catch(err){
       console.error(err); setStatus('Error durante el análisis.')
@@ -522,6 +526,13 @@ export default function App(){
               </label>
               <label className="inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={showOverlays} onChange={e=>setShowOverlays(e.target.checked)}/><span>Overlays</span>
+              </label>
+              <label className="text-sm">Intensidad
+                <input type="range" min="0.15" max="1" step="0.05" value={overlayAlpha} onChange={e=>setOverlayAlpha(parseFloat(e.target.value))} className="ml-1 align-middle" />
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input type="checkbox" checked={showDiscarded} onChange={e=>setShowDiscarded(e.target.checked)} />
+                <span>Contornos descartados</span>
               </label>
             </div>
           </div>
