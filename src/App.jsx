@@ -438,7 +438,10 @@ export default function App(){
       const maskURL=(function(){ const c=document.createElement('canvas'); c.width=maskRGBA.cols; c.height=maskRGBA.rows; window.cv.imshow(c, maskRGBA); const u=c.toDataURL('image/png'); c.width=1; c.height=1; return u; })()
       const edgesURL=(function(){ const c=document.createElement('canvas'); c.width=edgesRGBA.cols; c.height=edgesRGBA.rows; window.cv.imshow(c, edgesRGBA); const u=c.toDataURL('image/png'); c.width=1; c.height=1; return u; })()
       const imgMask=new Image(); imgMask.onload=()=>{ setMaskOverlay({image:imgMask, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows}); draw() }; imgMask.src=maskURL
+      // Fallback: build from canvas (no async)
+      try{ const cm=document.createElement('canvas'); cm.width=maskRGBA.cols; cm.height=maskRGBA.rows; window.cv.imshow(cm, maskRGBA); setMaskOverlay({canvas:cm, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows}) }catch(_){}
       const imgEdges=new Image(); imgEdges.onload=()=>{ setEdgesOverlay({image:imgEdges, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}); draw() }; imgEdges.src=edgesURL
+      try{ const ce=document.createElement('canvas'); ce.width=edgesRGBA.cols; ce.height=edgesRGBA.rows; window.cv.imshow(ce, edgesRGBA); setEdgesOverlay({canvas:ce, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}) }catch(_){}
 
       const N=filtered.length
       const med=percentile(filtered,50), p10=percentile(filtered,10), p90=percentile(filtered,90)
@@ -455,7 +458,7 @@ export default function App(){
       src.delete(); gray.delete(); masked.delete(); cl.delete(); blur.delete(); bin.delete(); opened.delete(); kernel.delete(); contours.delete(); hier.delete(); mask.delete(); maskVis.delete(); edges.delete(); eroded.delete(); boundary.delete(); maskRGBA.delete(); edgesRGBA.delete()
 
       if(!filtered.length){ setStatus('No se detectaron partículas claras. Ajusta ROI/Exclusiones, aumenta contraste o mejora el enfoque. Sin partículas aceptadas, no se mostrará IUM ni overlays.'); return }
-      if(viz==='circles'){ setViz('mask') }
+      setViz('mask')
       setStatus(`Listo. N=${filtered.length} | D50=${med.toFixed(1)} µm | D10=${p10.toFixed(1)} µm | D90=${p90.toFixed(1)} µm · Cambia "Visualización" para ver máscara/bordes/contornos`)
     }catch(err){
       console.error(err); setStatus('Error durante el análisis.')
