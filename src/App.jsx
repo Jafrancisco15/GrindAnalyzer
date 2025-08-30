@@ -34,7 +34,6 @@ export default function App(){
   const [showBoundary,setShowBoundary]=useState(true)
   const [showMask,setShowMask]=useState(true)
   const [overlayPreset,setOverlayPreset]=useState('auditar')
-  const [overlayAlpha,setOverlayAlpha]=useState(0.6)
   const [overlayAlpha,setOverlayAlpha]=useState(0.55)
   const [showDiscarded,setShowDiscarded]=useState(true)
 
