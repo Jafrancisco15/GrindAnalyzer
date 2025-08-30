@@ -28,12 +28,20 @@ export default function App(){
   const [sizes,setSizes]=useState([])
   const [particles,setParticles]=useState([])
   const [showOverlays,setShowOverlays]=useState(true)
+  const [showCircles,setShowCircles]=useState(false)
+  const [showContours,setShowContours]=useState(true)
+  const [showEdges,setShowEdges]=useState(false)
+  const [showBoundary,setShowBoundary]=useState(true)
+  const [showMask,setShowMask]=useState(true)
+  const [overlayPreset,setOverlayPreset]=useState('auditar')
+  const [overlayAlpha,setOverlayAlpha]=useState(0.6)
   const [overlayAlpha,setOverlayAlpha]=useState(0.55)
   const [showDiscarded,setShowDiscarded]=useState(true)
 
   const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'none'
   const [maskOverlay,setMaskOverlay]=useState(null) // {image,x,y,w,h}
-  const [edgesOverlay,setEdgesOverlay]=useState(null) // {image,x,y,w,h}
+  const [edgesOverlay,setEdgesOverlay]=useState(null)
+  const [boundaryOverlay,setBoundaryOverlay]=useState(null) // {image,x,y,w,h}
   const [contoursPoly,setContoursPoly]=useState([]) // [{pts:[{x,y},...], accepted:true, cx, cy}]
   const [particleRecords,setParticleRecords]=useState([]) // rows for CSV
 
@@ -95,7 +103,12 @@ export default function App(){
     const oy = sy - imgy*z
     g.save()
     g.beginPath(); g.arc(sx,sy,r,0,Math.PI*2); g.clip()
-    g.save(); g.translate(ox,oy); g.scale(z,z); g.drawImage(img,0,0); g.restore()
+    g.save(); g.translate(ox,oy); g.scale(z,z); g.drawImage(img,0,0)
+    if((showOverlays || showMask || showEdges || showContours || showCircles) && viz!=='none'){
+      if(showMask && maskOverlay && maskOverlay.canvas){ g.save(); g.globalAlpha=overlayAlpha; g.drawImage(maskOverlay.canvas, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore() }
+      if(typeof showBoundary!=='undefined' && boundaryOverlay && boundaryOverlay.canvas && showBoundary){ g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.15); g.drawImage(boundaryOverlay.canvas, boundaryOverlay.x, boundaryOverlay.y, boundaryOverlay.w, boundaryOverlay.h); g.restore() }
+      if(showEdges && edgesOverlay && edgesOverlay.canvas){ g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.25); g.drawImage(edgesOverlay.canvas, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore() }
+    }; g.restore()
     g.strokeStyle='#111827'; g.lineWidth=2; g.beginPath(); g.arc(sx,sy,r,0,Math.PI*2); g.stroke()
     g.restore()
   }
@@ -109,6 +122,11 @@ export default function App(){
     g.translate(view.current.ox, view.current.oy)
     g.scale(view.current.zoom, view.current.zoom)
     g.drawImage(img,0,0)
+    if((showOverlays || showMask || showEdges || showContours || showCircles) && viz!=='none'){
+      if(showMask && maskOverlay && maskOverlay.canvas){ g.save(); g.globalAlpha=overlayAlpha; g.drawImage(maskOverlay.canvas, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore() }
+      if(typeof showBoundary!=='undefined' && boundaryOverlay && boundaryOverlay.canvas && showBoundary){ g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.15); g.drawImage(boundaryOverlay.canvas, boundaryOverlay.x, boundaryOverlay.y, boundaryOverlay.w, boundaryOverlay.h); g.restore() }
+      if(showEdges && edgesOverlay && edgesOverlay.canvas){ g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.25); g.drawImage(edgesOverlay.canvas, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore() }
+    }
 
     if((showOverlays || viz==='mask' || viz==='edges') && viz!=='none'){
       if(viz==='mask' && maskOverlay){
@@ -132,17 +150,8 @@ export default function App(){
         g.fillStyle='#2563eb'; g.beginPath(); g.arc(rim.cx,rim.cy,hr,0,Math.PI*2); g.fill()
         g.beginPath(); g.arc(rim.cx+rim.r,rim.cy,hr,0,Math.PI*2); g.fill()
         g.restore() }
-      if(viz==='circles' && particles.length){
-        g.save(); g.strokeStyle='#f59e0b'; g.lineWidth=1.5/view.current.zoom;
-        particles.forEach(p=>{ g.beginPath(); g.arc(p.cx,p.cy,p.r_px,0,Math.PI*2); g.stroke() })
-        g.restore()
-      } else if(viz==='contours' && contoursPoly.length){
-        g.save(); g.lineWidth=1.5/view.current.zoom;
-        contoursPoly.forEach(cn=>{
-          const pts=cn.pts; if(!pts||pts.length<2) return
-          if(cn.accepted){
-            g.strokeStyle='#f59e0b'; g.fillStyle='rgba(245,158,11,0.15)'
-            g.beginPath(); g.moveTo(pts[0].x, pts[0].y); for(let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y) } g.closePath(); g.fill(); g.stroke()
+      if(showCircles && particles && particles.length){ g.save(); g.strokeStyle='#f59e0b'; g.lineWidth=1.5/view.current.zoom; particles.forEach(p=>{ g.beginPath(); g.arc(p.cx,p.cy,p.r_px,0,Math.PI*2); g.stroke() }); g.restore() }
+      if(showContours && contoursPoly && contoursPoly.length){ g.save(); g.strokeStyle='#f59e0b'; g.lineWidth=1.5/view.current.zoom; g.fillStyle='rgba(245,158,11,0.15)'; contoursPoly.forEach(cn=>{ const pts=cn.pts; if(!pts||pts.length<2) return; g.beginPath(); g.moveTo(pts[0].x, pts[0].y); for(let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y) } g.closePath(); if(cn.accepted){ g.fill(); g.stroke() } else { g.strokeStyle='rgba(245,158,11,0.35)'; g.setLineDash([4/view.current.zoom,3/view.current.zoom]); g.stroke(); g.setLineDash([]) } }); g.restore() } g.closePath(); g.fill(); g.stroke()
           } else if(showDiscarded){
             g.strokeStyle='rgba(245,158,11,0.35)'; g.setLineDash([4/view.current.zoom, 3/view.current.zoom])
             g.beginPath(); g.moveTo(pts[0].x, pts[0].y); for(let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y) } g.closePath(); g.stroke(); g.setLineDash([])
@@ -367,7 +376,7 @@ export default function App(){
       const blur=new window.cv.Mat(); window.cv.GaussianBlur(cl,blur,new window.cv.Size(3,3),0,0)
       const bin=new window.cv.Mat(); window.cv.adaptiveThreshold(blur,bin,255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY_INV, 35, 5)
 
-      const maskVis=new window.cv.Mat(); bin.copyTo(maskVis)
+      const maskVis=new window.cv.Mat(); opened.copyTo(maskVis)
       const kernel=window.cv.getStructuringElement(window.cv.MORPH_ELLIPSE, new window.cv.Size(3,3))
       const opened=new window.cv.Mat(); window.cv.morphologyEx(bin,opened,window.cv.MORPH_OPEN, kernel)
 
@@ -433,6 +442,13 @@ export default function App(){
         }
       }
       const edgesRGBA=new window.cv.Mat(); window.cv.cvtColor(edges, edgesRGBA, window.cv.COLOR_GRAY2RGBA, 0)
+      const boundaryRGBA=new window.cv.Mat(); window.cv.cvtColor(boundary, boundaryRGBA, window.cv.COLOR_GRAY2RGBA, 0)
+      for(let y=0;y<boundaryRGBA.rows;y++){
+        for(let x=0;x<boundaryRGBA.cols;x++){
+          const a=boundaryRGBA.ucharPtr(y,x)
+          if(a[0]>0){ a[0]=255; a[1]=215; a[2]=0; a[3]=255; } else { a[3]=0; }
+        }
+      }
       for(let y=0;y<edgesRGBA.rows;y++){
         for(let x=0;x<edgesRGBA.cols;x++){
           const a=edgesRGBA.ucharPtr(y,x)
@@ -445,7 +461,8 @@ export default function App(){
       // Fallback: build from canvas (no async)
       try{ const cm=document.createElement('canvas'); cm.width=maskRGBA.cols; cm.height=maskRGBA.rows; window.cv.imshow(cm, maskRGBA); setMaskOverlay({canvas:cm, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows}) }catch(_){}
       const imgEdges=new Image(); imgEdges.onload=()=>{ setEdgesOverlay({image:imgEdges, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}); draw() }; imgEdges.src=edgesURL
-      try{ const ce=document.createElement('canvas'); ce.width=edgesRGBA.cols; ce.height=edgesRGBA.rows; window.cv.imshow(ce, edgesRGBA); setEdgesOverlay({canvas:ce, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}) }catch(_){}
+      try{ const ce=document.createElement('canvas'); ce.width=edgesRGBA.cols; ce.height=edgesRGBA.rows; window.cv.imshow(ce, edgesRGBA); setEdgesOverlay({canvas:ce, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows})
+      const cb=document.createElement('canvas'); cb.width=boundaryRGBA.cols; cb.height=boundaryRGBA.rows; window.cv.imshow(cb, boundaryRGBA); setBoundaryOverlay({canvas:cb, x:localOff.x, y:localOff.y, w:boundaryRGBA.cols, h:boundaryRGBA.rows}) }catch(_){}
 
       const N=filtered.length
       const med=percentile(filtered,50), p10=percentile(filtered,10), p90=percentile(filtered,90)
@@ -459,7 +476,7 @@ export default function App(){
       setIum(Math.round(iumScore))
       setIumParts({U,S,C,Ns,H,span,focusStd,edgeAlign,solidity: solidityCount? (soliditySum/solidityCount) : 0 })
 
-      src.delete(); gray.delete(); masked.delete(); cl.delete(); blur.delete(); bin.delete(); opened.delete(); kernel.delete(); contours.delete(); hier.delete(); mask.delete(); maskVis.delete(); edges.delete(); eroded.delete(); boundary.delete(); maskRGBA.delete(); edgesRGBA.delete()
+      src.delete(); gray.delete(); masked.delete(); cl.delete(); blur.delete(); bin.delete(); opened.delete(); kernel.delete(); contours.delete(); hier.delete(); mask.delete(); maskVis.delete(); edges.delete(); eroded.delete(); boundary.delete(); maskRGBA.delete(); edgesRGBA.delete(); boundaryRGBA.delete()
 
       if(!filtered.length){ setStatus('No se detectaron partículas claras. Ajusta ROI/Exclusiones, aumenta contraste o mejora el enfoque. Sin partículas aceptadas, no se mostrará IUM ni overlays.'); return }
       setShowOverlays(true); setViz('mask')
