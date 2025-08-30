@@ -35,7 +35,6 @@ export default function App(){
   const [showMask,setShowMask]=useState(true)
   const [overlayPreset,setOverlayPreset]=useState('auditar')
   const [overlayAlpha,setOverlayAlpha]=useState(0.6)
-  const [overlayAlpha,setOverlayAlpha]=useState(0.55)
   const [showDiscarded,setShowDiscarded]=useState(true)
 
   const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'none'
