@@ -1,4 +1,4 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-canvas{ touch-action: none; } /* custom pointer handling */
+canvas{ touch-action: none; }
