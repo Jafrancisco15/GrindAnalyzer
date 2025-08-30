@@ -1,5 +1,12 @@
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
-canvas{ touch-action: none; }
-canvas{ touch-action: none; overscroll-behavior: contain; }
+
+/* Mobile tweaks */
+* { -webkit-tap-highlight-color: transparent; }
+
+/* High-contrast card for the logo on dark bg */
+.logo-wrap {
+  backdrop-filter: blur(6px);
+}

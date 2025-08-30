@@ -1,29 +1,33 @@
-# GrindSizer — Portafiltro (v2.4)
 
-- Canvas sin deformación; zoom al cursor; pan controlado.
-- **Overlays reales (incluye Contornos reales)** del procesamiento: **Máscara (BW/ámbar)** y **Bordes (Canny)**.
-- Opción de ver **círculos equivalentes** solo a modo ilustrativo.
-- **Índice de Uniformidad de Molienda (IUM, 0–100)** basado en:
-  - Uniformidad de distribución (span D90/D10)
-  - Enfoque (σ del Laplaciano)
-  - Alineación borde/máscara
-  - Solidez media de partículas
-  - Tamaño de muestra
-- D10/D50/D90 + histograma; ROI y exclusiones.
+# Grind Sizer Mobile v3
 
-## Uso
+Rediseño móvil con:
+- **Tema negro + amarillo**
+- **Logo** con alto contraste (pill amarilla + texto negro)
+- **Pinch-to-zoom** y **pan** fluidos en el visor de imagen
+- **Overlays útiles** para la inspección de partículas:
+  - `mask` (umbral binario)
+  - `edges` (bordes tipo Sobel)
+  - `contours` (bbox de componentes conectados)
+  - `centroids` (centroides de partículas)
+  - `sizeMap` (puntos coloreados por tamaño relativo)
+
+> Nota: los cálculos están implementados en JS puro (rápidos pero simples). Para producción, conviene llevarlos a Web Worker y/o optimizarlos con estrategias más robustas.
+
+## Ejecutar
+
 ```bash
 npm i
 npm run dev
 ```
 
+## Integración con tus cálculos
+Si ya tienes un pipeline de detección propio, puedes:
+- reemplazar `connectedComponents(...)` por tus resultados, o
+- exponer tus partículas (con `cx, cy, area, bbox`) y conectarlas al `ImageViewport` mediante `onParticles(...)`.
 
-**Nuevo en v2.4**: modo *Contornos reales* y botón **Exportar CSV** (tamaños individuales y métricas por partícula).
-
-
-## v2.6
-- Tema **negro + amarillo**.
-- Pan por cursor **(default)**; lupa **off**.
-- Guías y flechas para subir/bajar/izq/der la imagen.
-- Selector de overlays **independiente** (Máscara, Borde, Canny, Contornos, Círculos) y presets (Auditar, Todos, etc.).
-- Overlays reconstruidos desde el **pipeline real**: `opened` (máscara), `boundary`, `Canny`, contornos y círculos equivalentes.
+## Mejoras posibles
+- CLAHE / umbrales adaptativos
+- Supresión de grumos vs. partículas dispersas (morfología + distancia)
+- Web Worker para no bloquear la UI
+- Guardar/recuperar parámetros por imagen
