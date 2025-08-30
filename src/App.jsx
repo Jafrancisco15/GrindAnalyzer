@@ -14,8 +14,9 @@ export default function App(){
   const [status,setStatus]=useState('Sube una foto superior del portafiltro con la molienda.')
   const [cvReady,setCvReady]=useState(false)
 
+  // view in IMAGE coords
   const view=useRef({zoom:1, ox:0, oy:0})
-  const [mode,setMode]=useState('pan')
+  const [mode,setMode]=useState('roi') // default ROI to avoid pan accidental
   const [roi,setRoi]=useState(null)
   const [excls,setExcls]=useState([])
   const drag=useRef(null)
@@ -90,7 +91,8 @@ export default function App(){
       if(excls.length){ g.save(); g.fillStyle='rgba(239,68,68,0.25)'; g.strokeStyle='#ef4444'; g.lineWidth=2/view.current.zoom;
         excls.forEach(r=>{ g.fillRect(r.x,r.y,r.w,r.h); g.strokeRect(r.x,r.y,r.w,r.h) }); g.restore() }
       if(rim){ g.save(); g.strokeStyle='#2563eb'; g.lineWidth=2/view.current.zoom; g.beginPath(); g.arc(rim.cx,rim.cy,rim.r,0,Math.PI*2); g.stroke();
-        const label=`${Number(customMM||basketMM)} mm · ${umPerPx? umPerPx.toFixed(1):'—'} µm/px`
+        const mmVal = Number(customMM || basketMM)
+        const label=`${mmVal} mm · ${umPerPx? umPerPx.toFixed(1):'—'} µm/px`
         g.fillStyle='rgba(37,99,235,0.85)'; g.font=`${14/view.current.zoom}px sans-serif`; g.fillText(label,rim.cx+6/view.current.zoom,rim.cy-6/view.current.zoom)
         const hr=8/view.current.zoom
         g.fillStyle='#2563eb'; g.beginPath(); g.arc(rim.cx,rim.cy,hr,0,Math.PI*2); g.fill()
@@ -120,6 +122,7 @@ export default function App(){
     view.current.oy = (cssH - ih*scale)/2
     draw()
   }
+
   async function onFile(e){
     const f=e.target.files?.[0]; if(!f) return
     const image=new Image(); image.onload=()=>{ setImg(image); setTimeout(()=>{ resizeCanvas(); fitView(); }, 0) }
@@ -128,6 +131,7 @@ export default function App(){
     setRoi(null); setExcls([]); setRim(null); setUmPerPx(null); setSizes([]); setParticles([])
     setStatus('Imagen cargada. Detecta el aro (auto) o calibra con 3 puntos; ajusta con el cursor.')
   }
+
   function onWheel(e){
     if(!img) return
     e.preventDefault()
@@ -136,10 +140,13 @@ export default function App(){
     const before=screenToImage(mx,my)
     const factor = e.deltaY<0 ? 1.1 : 0.9
     const newZoom = clamp(view.current.zoom*factor, 0.05, 20)
-    view.current.zoom = newZoom
+    const cssW=parseFloat(getComputedStyle(canvasRef.current).width), cssH=parseFloat(getComputedStyle(canvasRef.current).height)
+    // clamp zoom so that image doesn't get lost: keep at least 30% of canvas covered
+    const minZoom = Math.min(cssW/img.width, cssH/img.height) * 0.3
+    view.current.zoom = Math.max(newZoom, minZoom)
     const after=screenToImage(mx,my)
-    view.current.ox += (mx - (after.x*newZoom + view.current.ox))
-    view.current.oy += (my - (after.y*newZoom + view.current.oy))
+    view.current.ox += (mx - (after.x*view.current.zoom + view.current.ox))
+    view.current.oy += (my - (after.y*view.current.zoom + view.current.oy))
     draw()
   }
 
@@ -148,7 +155,7 @@ export default function App(){
     clicks.current=[...clicks.current, p].slice(-3)
     if(clicks.current.length===3){
       const c=circleFrom3(clicks.current[0], clicks.current[1], clicks.current[2])
-      if(c){ setRim(c); recomputeScale(c); setStatus(`Calibrado manual. Escala: ${umPerPx?umPerPx.toFixed(1):'—'} µm/px`) }
+      if(c){ setRim(c); recomputeScale(c); setStatus('Calibrado manual listo.') }
       else setStatus('Fallo el ajuste; repite los 3 puntos.')
       clicks.current=[]
     }
@@ -168,14 +175,19 @@ export default function App(){
       setExcls(prev=>[...prev,{x:p.x,y:p.y,w:0,h:0,_draft:true}]); drag.current.kind='exclude'
     } else if(mode==='calib'){
       setCalibPoint(p); drag.current.kind='none'
+    } else if(mode==='pan'){
+      drag.current.kind='pan'
     } else {
+      // default: interact with rim if near handles; otherwise do nothing
       if(rim){
         const d=Math.hypot(p.x-rim.cx,p.y-rim.cy)
         const tol = 12/view.current.zoom
         if(d<tol){ drag.current.kind='rim-center' }
         else if(Math.abs(d-rim.r)<tol){ drag.current.kind='rim-radius' }
-        else { drag.current.kind='pan' }
-      } else { drag.current.kind='pan' }
+        else { drag.current.kind='none' }
+      } else {
+        drag.current.kind='none'
+      }
     }
   }
   function onPointerMove(e){
@@ -212,43 +224,61 @@ export default function App(){
 
   function recomputeScale(circ=rim){
     if(!circ) return
-    const mm = Number(customMM || basketMM)
+    const mm = Number(customMM || basketMM) || basketMM
     const um = (mm*1000)/(circ.r*2)
     setUmPerPx(um)
   }
 
+  // Faster, non-freezing auto-detect: work on downscaled image <= 900px max side
   function autoDetect(){
     if(!cvReady || !img){ setStatus('OpenCV no listo o no hay imagen'); return }
-    const off=document.createElement('canvas'); off.width=img.width; off.height=img.height
-    off.getContext('2d').drawImage(img,0,0)
-    const src=window.cv.imread(off)
-    const gray=new window.cv.Mat(); window.cv.cvtColor(src,gray,window.cv.COLOR_RGBA2GRAY,0)
-    const blur=new window.cv.Mat(); window.cv.GaussianBlur(gray,blur,new window.cv.Size(9,9),2,2)
-    const edges=new window.cv.Mat(); window.cv.Canny(blur,edges,50,150)
-    const circles=new window.cv.Mat()
-    window.cv.HoughCircles(blur,circles,window.cv.HOUGH_GRADIENT,1.2, img.height/4, 100, 50, Math.floor(img.height*0.15), Math.floor(img.height*0.7))
-    let best=null
-    function circleScore(cx,cy,r){
-      const N=128; let sum=0
-      for(let i=0;i<N;i++){
-        const t=(i/N)*2*Math.PI
-        const x=Math.round(cx + r*Math.cos(t)), y=Math.round(cy + r*Math.sin(t))
-        if(x>=0 && y>=0 && x<edges.cols && y<edges.rows){ sum += edges.ucharPtr(y,x)[0] }
+    setStatus('Detectando aro…')
+    try{
+      const maxSide = 900
+      const scale = Math.max(img.width, img.height) > maxSide ? (Math.max(img.width, img.height)/maxSide) : 1
+      const dw = Math.round(img.width/scale), dh = Math.round(img.height/scale)
+
+      const off=document.createElement('canvas'); off.width=dw; off.height=dh
+      const ctx=off.getContext('2d'); ctx.drawImage(img,0,0,dw,dh)
+
+      const src=window.cv.imread(off)
+      const gray=new window.cv.Mat(); window.cv.cvtColor(src,gray,window.cv.COLOR_RGBA2GRAY,0)
+      const blur=new window.cv.Mat(); window.cv.GaussianBlur(gray,blur,new window.cv.Size(9,9),2,2)
+      const edges=new window.cv.Mat(); window.cv.Canny(blur,edges,50,150)
+
+      const circles=new window.cv.Mat()
+      window.cv.HoughCircles(blur,circles,window.cv.HOUGH_GRADIENT,1.2, dh/4, 100, 50, Math.floor(dh*0.15), Math.floor(dh*0.7))
+
+      let best=null
+      function circleScore(cx,cy,r){
+        const N=96; let sum=0
+        for(let i=0;i<N;i++){
+          const t=(i/N)*2*Math.PI
+          const x=Math.round(cx + r*Math.cos(t)), y=Math.round(cy + r*Math.sin(t))
+          if(x>=0 && y>=0 && x<edges.cols && y<edges.rows){ sum += edges.ucharPtr(y,x)[0] }
+        }
+        return sum/N
       }
-      return sum/N
+      for(let i=0;i<circles.cols;i++){
+        const cx=circles.data32F[i*3], cy=circles.data32F[i*3+1], r=circles.data32F[i*3+2]
+        const dc = Math.hypot(cx - dw/2, cy - dh/2)
+        const score = circleScore(cx,cy,r) - 0.002*dc + 0.001*r
+        if(!best || score>best.score) best={cx,cy,r,score}
+      }
+
+      src.delete(); gray.delete(); blur.delete(); edges.delete(); circles.delete()
+
+      if(!best){ setStatus('No se detectó el aro. Usa 3 puntos o ajusta manualmente.'); return }
+
+      // scale back to full-res
+      const cx = best.cx*scale, cy = best.cy*scale, r = best.r*scale
+      setRim({cx, cy, r}); recomputeScale({cx,cy,r})
+      setStatus('Aro detectado. Ajusta con el cursor (centro o radio).')
+      draw()
+    }catch(err){
+      console.error(err)
+      setStatus('Error al detectar el aro (memoria o imagen muy grande). Prueba con una foto más liviana.')
     }
-    for(let i=0;i<circles.cols;i++){
-      const cx=circles.data32F[i*3], cy=circles.data32F[i*3+1], r=circles.data32F[i*3+2]
-      const dc = Math.hypot(cx - img.width/2, cy - img.height/2)
-      const score = circleScore(cx,cy,r) - 0.002*dc + 0.001*r
-      if(!best || score>best.score) best={cx,cy,r,score}
-    }
-    src.delete(); gray.delete(); blur.delete(); edges.delete(); circles.delete()
-    if(!best){ setStatus('No se detectó el aro. Usa 3 puntos o ajusta manualmente.'); return }
-    setRim({cx:best.cx, cy:best.cy, r:best.r})
-    recomputeScale({cx:best.cx, cy:best.cy, r:best.r})
-    setStatus('Aro detectado. Ajusta con el cursor (centro o radio).')
-    draw()
   }
 
   function localExclusions(rect, rects){
@@ -259,54 +289,70 @@ export default function App(){
   function analyze(){
     if(!cvReady||!img){ setStatus('Falta imagen u OpenCV'); return }
     if(!rim||!umPerPx){ setStatus('Calibra primero (aro + mm)'); return }
-    const off=document.createElement('canvas'); off.width=img.width; off.height=img.height
-    off.getContext('2d').drawImage(img,0,0)
-    let src=window.cv.imread(off)
-    let localOff={x:0,y:0}
-    if(roi && roi.w>10 && roi.h>10){
-      const rect=new window.cv.Rect(Math.max(0,roi.x|0), Math.max(0,roi.y|0), Math.min(roi.w|0, src.cols-(roi.x|0)), Math.min(roi.h|0, src.rows-(roi.y|0)))
-      src=src.roi(rect); localOff={x:rect.x,y:rect.y}
+    setStatus('Analizando…')
+
+    try{
+      const off=document.createElement('canvas'); off.width=img.width; off.height=img.height
+      off.getContext('2d').drawImage(img,0,0)
+      let src=window.cv.imread(off)
+
+      let localOff={x:0,y:0}
+      if(roi && roi.w>10 && roi.h>10){
+        const rect=new window.cv.Rect(Math.max(0,roi.x|0), Math.max(0,roi.y|0), Math.min(roi.w|0, src.cols-(roi.x|0)), Math.min(roi.h|0, src.rows-(roi.y|0)))
+        src=src.roi(rect); localOff={x:rect.x,y:rect.y}
+      }
+
+      const ex=localExclusions(roi, excls)
+      const mask=new window.cv.Mat(src.rows, src.cols, window.cv.CV_8UC1, new window.cv.Scalar(255))
+      ex.forEach(r=>{
+        const x=Math.max(0,r.x|0), y=Math.max(0,r.y|0)
+        const w=Math.min(r.w|0, mask.cols-x), h=Math.min(r.h|0, mask.rows-y)
+        if(w>0&&h>0){ const m=mask.roi(new window.cv.Rect(x,y,w,h)); m.setTo(new window.cv.Scalar(0)); m.delete() }
+      })
+
+      const gray=new window.cv.Mat(); window.cv.cvtColor(src,gray,window.cv.COLOR_RGBA2GRAY,0)
+      const masked=new window.cv.Mat(); window.cv.bitwise_and(gray,gray,masked,mask)
+      const clahe=new window.cv.CLAHE(2.0, new window.cv.Size(8,8)); const cl=new window.cv.Mat(); clahe.apply(masked,cl)
+      const blur=new window.cv.Mat(); window.cv.GaussianBlur(cl,blur,new window.cv.Size(3,3),0,0)
+      const bin=new window.cv.Mat(); window.cv.adaptiveThreshold(blur,bin,255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY_INV, 35, 5)
+      const kernel=window.cv.getStructuringElement(window.cv.MORPH_ELLIPSE, new window.cv.Size(3,3))
+      const opened=new window.cv.Mat(); window.cv.morphologyEx(bin,opened,window.cv.MORPH_OPEN, kernel)
+
+      const contours=new window.cv.MatVector(); const hier=new window.cv.Mat()
+      window.cv.findContours(opened,contours,hier, window.cv.RETR_EXTERNAL, window.cv.CHAIN_APPROX_SIMPLE)
+
+      const sizes=[], pts=[]
+      for(let i=0;i<contours.size();i++){
+        const cnt=contours.get(i)
+        const area=window.cv.contourArea(cnt)
+        if(area<3) continue
+        const m=window.cv.moments(cnt); const cx=m.m10/(m.m00||1); const cy=m.m01/(m.m00||1)
+        let bad=false; for(const r of ex){ if(cx>=r.x && cx<=r.x+r.w && cy>=r.y && cy<=r.y+r.h){ bad=true; break } } if(bad) continue
+        const dpx=2*Math.sqrt(area/Math.PI)
+        const dum=dpx*umPerPx
+        if(dum<10 || dum>3000) continue
+        sizes.push(dum)
+        pts.push({cx:cx+localOff.x, cy:cy+localOff.y, r_px:dpx/2, r_um:dum/2})
+      }
+
+      const filtered=iqrFilter(sizes)
+      let finalPts=pts
+      if(filtered.length && sizes.length){
+        const q1=percentile(sizes,25), q3=percentile(sizes,75), iqr=q3-q1, lo=q1-1.5*iqr, hi=q3+1.5*iqr
+        finalPts=pts.filter(p=> (p.r_um*2)>=lo && (p.r_um*2)<=hi)
+      }
+
+      setSizes(filtered); setParticles(finalPts)
+
+      src.delete(); gray.delete(); masked.delete(); cl.delete(); blur.delete(); bin.delete(); opened.delete(); kernel.delete(); contours.delete(); hier.delete(); mask.delete()
+
+      if(!filtered.length){ setStatus('No se detectaron partículas claras. Ajusta ROI/Exclusiones o enfoque.'); return }
+      const med=percentile(filtered,50), p10=percentile(filtered,10), p90=percentile(filtered,90)
+      setStatus(`N=${filtered.length} | D50=${med.toFixed(1)} µm | D10=${p10.toFixed(1)} µm | D90=${p90.toFixed(1)} µm`)
+    }catch(err){
+      console.error(err)
+      setStatus('Error durante el análisis (memoria o imagen muy grande). Prueba con una ROI más pequeña.')
     }
-    const ex=localExclusions(roi, excls)
-    const mask=new window.cv.Mat(src.rows, src.cols, window.cv.CV_8UC1, new window.cv.Scalar(255))
-    ex.forEach(r=>{
-      const x=Math.max(0,r.x|0), y=Math.max(0,r.y|0)
-      const w=Math.min(r.w|0, mask.cols-x), h=Math.min(r.h|0, mask.rows-y)
-      if(w>0&&h>0){ const m=mask.roi(new window.cv.Rect(x,y,w,h)); m.setTo(new window.cv.Scalar(0)); m.delete() }
-    })
-    const gray=new window.cv.Mat(); window.cv.cvtColor(src,gray,window.cv.COLOR_RGBA2GRAY,0)
-    const masked=new window.cv.Mat(); window.cv.bitwise_and(gray,gray,masked,mask)
-    const clahe=new window.cv.CLAHE(2.0, new window.cv.Size(8,8)); const cl=new window.cv.Mat(); clahe.apply(masked,cl)
-    const blur=new window.cv.Mat(); window.cv.GaussianBlur(cl,blur,new window.cv.Size(3,3),0,0)
-    const bin=new window.cv.Mat(); window.cv.adaptiveThreshold(blur,bin,255, window.cv.ADAPTIVE_THRESH_GAUSSIAN_C, window.cv.THRESH_BINARY_INV, 35, 5)
-    const kernel=window.cv.getStructuringElement(window.cv.MORPH_ELLIPSE, new window.cv.Size(3,3))
-    const opened=new window.cv.Mat(); window.cv.morphologyEx(bin,opened,window.cv.MORPH_OPEN, kernel)
-    const contours=new window.cv.MatVector(); const hier=new window.cv.Mat()
-    window.cv.findContours(opened,contours,hier, window.cv.RETR_EXTERNAL, window.cv.CHAIN_APPROX_SIMPLE)
-    const sizes=[], pts=[]
-    for(let i=0;i<contours.size();i++){
-      const cnt=contours.get(i)
-      const area=window.cv.contourArea(cnt)
-      if(area<3) continue
-      const m=window.cv.moments(cnt); const cx=m.m10/(m.m00||1); const cy=m.m01/(m.m00||1)
-      let bad=false; for(const r of ex){ if(cx>=r.x && cx<=r.x+r.w && cy>=r.y && cy<=r.y+r.h){ bad=true; break } } if(bad) continue
-      const dpx=2*Math.sqrt(area/Math.PI)
-      const dum=dpx*umPerPx
-      if(dum<10 || dum>3000) continue
-      sizes.push(dum)
-      pts.push({cx:cx+localOff.x, cy:cy+localOff.y, r_px:dpx/2, r_um:dum/2})
-    }
-    const filtered=iqrFilter(sizes)
-    let finalPts=pts
-    if(filtered.length && sizes.length){
-      const q1=percentile(sizes,25), q3=percentile(sizes,75), iqr=q3-q1, lo=q1-1.5*iqr, hi=q3+1.5*iqr
-      finalPts=pts.filter(p=> (p.r_um*2)>=lo && (p.r_um*2)<=hi)
-    }
-    setSizes(filtered); setParticles(finalPts)
-    src.delete(); gray.delete(); masked.delete(); cl.delete(); blur.delete(); bin.delete(); opened.delete(); kernel.delete(); contours.delete(); hier.delete(); mask.delete()
-    if(!filtered.length){ setStatus('No se detectaron partículas claras. Ajusta ROI/Exclusiones o enfoque.'); return }
-    const med=percentile(filtered,50), p10=percentile(filtered,10), p90=percentile(filtered,90)
-    setStatus(`N=${filtered.length} | D50=${med.toFixed(1)} µm | D10=${p10.toFixed(1)} µm | D90=${p90.toFixed(1)} µm`)
   }
 
   useEffect(()=>{ if(rim) recomputeScale(rim) },[basketMM,customMM])
@@ -323,9 +369,11 @@ export default function App(){
 
   useEffect(()=>{ draw() }, [lensEnabled,lensFactor,lensRadius])
 
+  function recenter(){ fitView() }
+
   return (
     <div className="max-w-7xl mx-auto p-4">
-      <h1 className="text-2xl font-semibold mb-2">GrindSizer — Portafiltro (v2.1)</h1>
+      <h1 className="text-2xl font-semibold mb-2">GrindSizer — Portafiltro (v2.2)</h1>
       <p className="text-gray-600 mb-4">{status}</p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -341,6 +389,7 @@ export default function App(){
             <button onClick={()=>setExcls([])} className="px-3 py-1 rounded bg-pink-100">Limpiar exclusiones</button>
             <button onClick={()=>setMode('calib')} className={`px-3 py-1 rounded ${mode==='calib'?'bg-blue-600 text-white':'bg-gray-100'}`}>Calibrar (3 puntos)</button>
             <button onClick={autoDetect} className="px-3 py-1 rounded bg-emerald-600 text-white">Detectar Aro</button>
+            <button onClick={recenter} className="px-3 py-1 rounded bg-gray-200">Recentrar</button>
             <label className="ml-auto inline-flex items-center gap-2 text-sm">
               <input type="checkbox" checked={showOverlays} onChange={e=>setShowOverlays(e.target.checked)}/><span>Overlays</span>
             </label>
@@ -394,7 +443,7 @@ export default function App(){
               <input value={customMM} onChange={e=>setCustomMM(e.target.value)} placeholder="Otro (mm)" className="w-28 border rounded px-2 py-1"/>
               <button onClick={()=>{ const mm=Number(customMM)||basketMM; setBasketMM(mm); if(rim){ const um=(mm*1000)/(rim.r*2); setUmPerPx(um) } }} className="px-2 py-1 rounded bg-gray-100">Usar</button>
             </div>
-            <p className="text-xs text-gray-600 mt-2">Ajusta el aro con el cursor: arrastra el centro o el radio. La lupa ayuda al detalle.</p>
+            <p className="text-xs text-gray-600 mt-2">Ajusta el aro con el cursor: arrastra el centro o el radio. Usa “Mover” solo cuando quieras panear.</p>
           </div>
 
           <div className="bg-white rounded-2xl shadow p-3">
