@@ -34,6 +34,7 @@ export default function App(){
   const [showBoundary,setShowBoundary]=useState(true)
   const [showMask,setShowMask]=useState(true)
   const [overlayPreset,setOverlayPreset]=useState('auditar')
+  const [overlayAlpha,setOverlayAlpha]=useState(0.6)
   const [overlayAlpha,setOverlayAlpha]=useState(0.55)
   const [showDiscarded,setShowDiscarded]=useState(true)
 
@@ -113,18 +114,77 @@ export default function App(){
   }
 
   function draw(){
+    
     const c=canvasRef.current; if(!c) return
     const g=c.getContext('2d')
     g.clearRect(0,0,c.width,c.height)
     if(!img) return
+
+    // world transform
     g.save()
     g.translate(view.current.ox, view.current.oy)
     g.scale(view.current.zoom, view.current.zoom)
+
+    // base image
     g.drawImage(img,0,0)
-    if((showOverlays || showMask || showEdges || showContours || showCircles) && viz!=='none'){
-      if(showMask && maskOverlay && maskOverlay.canvas){ g.save(); g.globalAlpha=overlayAlpha; g.drawImage(maskOverlay.canvas, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore() }
-      if(typeof showBoundary!=='undefined' && boundaryOverlay && boundaryOverlay.canvas && showBoundary){ g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.15); g.drawImage(boundaryOverlay.canvas, boundaryOverlay.x, boundaryOverlay.y, boundaryOverlay.w, boundaryOverlay.h); g.restore() }
-      if(showEdges && edgesOverlay && edgesOverlay.canvas){ g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.25); g.drawImage(edgesOverlay.canvas, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore() }
+
+    // mask/edges/boundary overlays (independent toggles)
+    if(viz!=='none'){
+      if((showOverlays || showMask) && maskOverlay && maskOverlay.canvas){
+        g.save(); g.globalAlpha=overlayAlpha; g.drawImage(maskOverlay.canvas, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore()
+      }
+      if((showOverlays || (typeof showBoundary!=='undefined' && showBoundary)) && boundaryOverlay && boundaryOverlay.canvas){
+        g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.15); g.drawImage(boundaryOverlay.canvas, boundaryOverlay.x, boundaryOverlay.y, boundaryOverlay.w, boundaryOverlay.h); g.restore()
+      }
+      if((showOverlays || showEdges) && edgesOverlay && edgesOverlay.canvas){
+        g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.25); g.drawImage(edgesOverlay.canvas, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore()
+      }
+    }
+
+    // ROI & Exclusions
+    if(roi){ g.save(); g.strokeStyle='#10b981'; g.lineWidth=2/view.current.zoom; g.strokeRect(roi.x,roi.y,roi.w,roi.h); g.restore() }
+    if(excls && excls.length){ g.save(); g.fillStyle='rgba(239,68,68,0.25)'; g.strokeStyle='#ef4444'; g.lineWidth=2/view.current.zoom; excls.forEach(r=>{ g.fillRect(r.x,r.y,r.w,r.h); g.strokeRect(r.x,r.y,r.w,r.h) }); g.restore() }
+
+    // Rim + scale info
+    if(rim){ g.save(); g.strokeStyle='#fcd34d'; g.lineWidth=2/view.current.zoom; g.beginPath(); g.arc(rim.cx,rim.cy,rim.r,0,Math.PI*2); g.stroke();
+      const label=`${Number(customMM || basketMM)} mm · ${umPerPx? umPerPx.toFixed(1):'—'} µm/px`
+      g.fillStyle='rgba(250,204,21,0.85)'; g.font=`${14/view.current.zoom}px sans-serif`; g.fillText(label,rim.cx+6/view.current.zoom,rim.cy-6/view.current.zoom)
+      const hr=8/view.current.zoom; g.fillStyle='#fcd34d'; g.beginPath(); g.arc(rim.cx,rim.cy,hr,0,Math.PI*2); g.fill()
+      g.beginPath(); g.arc(rim.cx+rim.r,rim.cy,hr,0,Math.PI*2); g.fill(); g.restore() }
+
+    // Contours & circles (independent toggles)
+    if(showCircles && particles && particles.length){
+      g.save(); g.strokeStyle='#fde68a'; g.setLineDash([5/view.current.zoom,3/view.current.zoom]); g.lineWidth=1.5/view.current.zoom
+      particles.forEach(p=>{ g.beginPath(); g.arc(p.cx,p.cy,p.r_px,0,Math.PI*2); g.stroke() })
+      g.setLineDash([]); g.restore()
+    }
+    if(showContours && contoursPoly && contoursPoly.length){
+      g.save(); g.lineWidth=1.5/view.current.zoom
+      contoursPoly.forEach(cn=>{
+        const pts=cn.pts; if(!pts || pts.length<2) return
+        g.beginPath(); g.moveTo(pts[0].x, pts[0].y)
+        for(let i=1;i<pts.length;i++){ g.lineTo(pts[i].x, pts[i].y) }
+        g.closePath()
+        if(cn.accepted){ g.strokeStyle='#f59e0b'; g.fillStyle='rgba(245,158,11,0.12)'; g.fill(); g.stroke() }
+        else { g.strokeStyle='rgba(245,158,11,0.35)'; g.setLineDash([4/view.current.zoom,3/view.current.zoom]); g.stroke(); g.setLineDash([]) }
+      })
+      g.restore()
+    }
+
+    g.restore()
+
+    // lens
+    if(img && lensEnabled && lens.current && lens.current.visible){
+      const {sx,sy,imgx,imgy}=lens.current
+      const r=lensRadius
+      const z=view.current.zoom * lensFactor
+      const ox = sx - imgx*z
+      const oy = sy - imgy*z
+      g.save(); g.beginPath(); g.arc(sx,sy,r,0,Math.PI*2); g.clip()
+      g.save(); g.translate(ox,oy); g.scale(z,z); g.drawImage(img,0,0); g.restore()
+      g.strokeStyle='#fcd34d'; g.lineWidth=2; g.beginPath(); g.arc(sx,sy,r,0,Math.PI*2); g.stroke(); g.restore()
+    }
+
     }
 
     if((showOverlays || viz==='mask' || viz==='edges') && viz!=='none'){
