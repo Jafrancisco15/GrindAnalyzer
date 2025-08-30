@@ -15,7 +15,7 @@ export default function App(){
   const [cvReady,setCvReady]=useState(false)
 
   const view=useRef({zoom:1, ox:0, oy:0})
-  const [mode,setMode]=useState('pan')
+  const [mode,setMode]=useState('roi')
   const [roi,setRoi]=useState(null)
   const [excls,setExcls]=useState([])
   const drag=useRef(null)
@@ -30,10 +30,7 @@ export default function App(){
   const [showOverlays,setShowOverlays]=useState(true)
   const [overlayAlpha,setOverlayAlpha]=useState(0.55)
   const [showDiscarded,setShowDiscarded]=useState(true)
-  const [multiOverlays,setMultiOverlays]=useState(false)
-  const [overlayFlags,setOverlayFlags]=useState({
-  mask:false, edges:false, contours:true, circles:true
-})
+
   const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'none'
   const [maskOverlay,setMaskOverlay]=useState(null) // {image,x,y,w,h}
   const [edgesOverlay,setEdgesOverlay]=useState(null) // {image,x,y,w,h}
@@ -44,7 +41,7 @@ export default function App(){
   const [iumParts,setIumParts]=useState(null)
 
   // Magnifier
-  const [lensEnabled,setLensEnabled]=useState(false)
+  const [lensEnabled,setLensEnabled]=useState(true)
   const [lensFactor,setLensFactor]=useState(3)
   const [lensRadius,setLensRadius]=useState(90)
   const lens=useRef({sx:0,sy:0,imgx:0,imgy:0,visible:false})
@@ -68,23 +65,7 @@ export default function App(){
     const ro=new ResizeObserver(resizeCanvas)
     if(holderRef.current) ro.observe(holderRef.current)
     window.addEventListener('orientationchange', resizeCanvas)
-    
-  function nudgeY(delta){
-    if(!img) return
-    view.current.oy += delta
-    draw()
-  }
-
-  useEffect(()=>{
-    function onKey(e){
-      if(!img) return
-      if(e.key==='ArrowUp'){ e.preventDefault(); nudgeY(-10) }
-      if(e.key==='ArrowDown'){ e.preventDefault(); nudgeY(10) }
-    }
-    window.addEventListener('keydown', onKey)
-    return ()=>window.removeEventListener('keydown', onKey)
-  },[img])
-return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', resizeCanvas) }
+    return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', resizeCanvas) }
   },[img])
 
   useEffect(()=>{
@@ -129,55 +110,17 @@ return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', re
     g.scale(view.current.zoom, view.current.zoom)
     g.drawImage(img,0,0)
 
-    
-    // Overlays
-    if(viz!=='none'){
-      const alpha = overlayAlpha
-      function drawMask(){ if(maskOverlay){ const im=new Image(); im.src=maskOverlay.url || maskOverlay.image?.src || maskOverlay.image; g.save(); g.globalAlpha=alpha; g.drawImage(im, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore() } }
-      function drawEdges(){ if(edgesOverlay){ const im=new Image(); im.src=edgesOverlay.url || edgesOverlay.image?.src || edgesOverlay.image; g.save(); g.globalAlpha=alpha; g.drawImage(im, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore() } }
-      function drawContours(){
-        if(contoursPoly && contoursPoly.length){
-          g.save(); g.globalAlpha=alpha
-          contoursPoly.forEach(poly=>{
-            if(!showDiscarded && !poly.accepted) return
-            g.beginPath()
-            poly.pts.forEach((pt,i)=> i? g.lineTo(pt.x,pt.y) : g.moveTo(pt.x,pt.y))
-            g.closePath()
-            g.strokeStyle = poly.accepted? '#fde047' : '#7c3aed' // amber / violet
-            g.lineWidth = 1/Math.max(1,view.current.zoom)
-            g.stroke()
-          })
-          g.restore()
-        }
-      }
-      function drawCircles(){
-        if(particles && particles.length){
-          g.save(); g.globalAlpha=alpha
-          particles.forEach(p=>{
-            if(!showDiscarded && !p.accepted) return
-            const col = p.accepted? '#facc15' : '#a78bfa'
-            g.beginPath(); g.arc(p.cx, p.cy, p.r, 0, Math.PI*2)
-            g.strokeStyle=col; g.lineWidth=1/Math.max(1,view.current.zoom); g.stroke()
-          })
-          g.restore()
-        }
-      }
-
-      if(multiOverlays){
-        if(overlayFlags.mask) drawMask()
-        if(overlayFlags.edges) drawEdges()
-        if(overlayFlags.contours) drawContours()
-        if(overlayFlags.circles) drawCircles()
-      } else {
-        if(viz==='mask') drawMask()
-        else if(viz==='edges') drawEdges()
-        else if(viz==='contours') drawContours()
-        else if(viz==='circles') drawCircles()
+    if((showOverlays || viz==='mask' || viz==='edges') && viz!=='none'){
+      if(viz==='mask' && maskOverlay){
+        const im=new Image(); im.src=maskOverlay.url
+        g.save(); g.globalAlpha=overlayAlpha; g.drawImage(im, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h); g.restore()
+      } else if(viz==='edges' && edgesOverlay){
+        const im=new Image(); im.src=edgesOverlay.url
+        g.save(); g.globalAlpha=Math.min(1, overlayAlpha+0.25); g.drawImage(im, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h); g.restore()
       }
     }
 
     if(showOverlays){
-
       if(roi){ g.save(); g.strokeStyle='#10b981'; g.lineWidth=2/view.current.zoom; g.strokeRect(roi.x,roi.y,roi.w,roi.h); g.restore() }
       if(excls.length){ g.save(); g.fillStyle='rgba(239,68,68,0.25)'; g.strokeStyle='#ef4444'; g.lineWidth=2/view.current.zoom;
         excls.forEach(r=>{ g.fillRect(r.x,r.y,r.w,r.h); g.strokeRect(r.x,r.y,r.w,r.h) }); g.restore() }
@@ -298,7 +241,7 @@ return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', re
     const rect=canvasRef.current.getBoundingClientRect()
     const x=e.clientX-rect.left, y=e.clientY-rect.top
     const p=screenToImage(x,y)
-    lens.current={sx:x, sy:y, imgx:p.x, imgy:p.y, visible:lensEnabled}
+    lens.current={sx:x, sy:y, imgx:p.x, imgy:p.y, visible:true}
 
     if(!drag.current){ draw(); return }
     const kind=drag.current.kind||mode
@@ -553,15 +496,13 @@ return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', re
   function recenter(){ fitView() }
 
   return (
-    <div className="app-dark-yellow max-w-7xl mx-auto p-4">
-      <div className="flex items-center gap-3 mb-2"><img src="/logo.png" alt="Logo" className="h-8 w-auto drop-shadow-[0_0_6px_rgba(250,204,21,0.5)] hidden sm:block" onError={(e)=>{e.currentTarget.style.display="none"}}/><h1 className="text-2xl font-semibold">GrindSizer — Portafiltro (v2.4)</h1></div>
+    <div className="max-w-7xl mx-auto p-4">
+      <h1 className="text-2xl font-semibold mb-2">GrindSizer — Portafiltro (v2.4)</h1>
       <p className="text-gray-600 mb-4">{status}</p>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
         <div className="lg:col-span-2 bg-white rounded-2xl shadow p-3">
           <div className="flex flex-wrap items-center gap-2 mb-3">
-            {/* Theme/logo header adjustments handled by CSS */}
-
             <label className="inline-flex items-center gap-2 text-sm">
               <span className="font-medium">Imagen</span>
               <input type="file" accept="image/*" onChange={onFile}/>
@@ -586,25 +527,6 @@ return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', re
               <label className="inline-flex items-center gap-2 text-sm">
                 <input type="checkbox" checked={showOverlays} onChange={e=>setShowOverlays(e.target.checked)}/><span>Overlays</span>
               </label>
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={lensEnabled} onChange={e=>setLensEnabled(e.target.checked)} />
-                <span>Lupa</span>
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm">
-                <input type="checkbox" checked={multiOverlays} onChange={e=>setMultiOverlays(e.target.checked)} />
-                <span>Varios overlays</span>
-              </label>
-              {multiOverlays && (
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <label className="inline-flex items-center gap-1"><input type="checkbox" checked={overlayFlags.mask} onChange={e=>setOverlayFlags(f=>({...f, mask:e.target.checked}))}/>Máscara</label>
-                  <label className="inline-flex items-center gap-1"><input type="checkbox" checked={overlayFlags.edges} onChange={e=>setOverlayFlags(f=>({...f, edges:e.target.checked}))}/>Bordes</label>
-                  <label className="inline-flex items-center gap-1"><input type="checkbox" checked={overlayFlags.contours} onChange={e=>setOverlayFlags(f=>({...f, contours:e.target.checked}))}/>Contornos</label>
-                  <label className="inline-flex items-center gap-1"><input type="checkbox" checked={overlayFlags.circles} onChange={e=>setOverlayFlags(f=>({...f, circles:e.target.checked}))}/>Círculos</label>
-                  <button type="button" onClick={()=>setOverlayFlags({mask:true, edges:true, contours:true, circles:true})} className="px-2 py-0.5 rounded border border-amber-500/50">Todos</button>
-                  <button type="button" onClick={()=>setOverlayFlags({mask:false, edges:false, contours:false, circles:false})} className="px-2 py-0.5 rounded border border-amber-500/50">Ninguno</button>
-                </div>
-              )}
-
               <label className="text-sm">Intensidad
                 <input type="range" min="0.15" max="1" step="0.05" value={overlayAlpha} onChange={e=>setOverlayAlpha(parseFloat(e.target.value))} className="ml-1 align-middle" />
               </label>
@@ -623,7 +545,7 @@ return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', re
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
               onPointerLeave={onPointerLeave}
-              className="rounded bg-gray-200 w-full border border-amber-500/40 bg-black\"
+              className="rounded bg-gray-200 w-full"
               style={{display:'block'}}
             />
           </div>
@@ -706,21 +628,4 @@ return ()=>{ ro.disconnect(); window.removeEventListener('orientationchange', re
       </section>
     </div>
   )
-    // Screen-space guides for up/down alignment
-    g.restore(); // ensure we are in screen coordinates
-    const h = c.height, w = c.width;
-    const y1 = Math.round(h*0.25), y2 = Math.round(h*0.75);
-    g.save();
-    g.setLineDash([6,6]);
-    g.strokeStyle = 'rgba(250, 204, 21, 0.35)'; // amber
-    g.lineWidth = 1;
-    g.beginPath(); g.moveTo(0,y1); g.lineTo(w,y1); g.stroke();
-    g.beginPath(); g.moveTo(0,y2); g.lineTo(w,y2); g.stroke();
-    g.setLineDash([]);
-    g.font = '12px system-ui, sans-serif';
-    g.fillStyle = 'rgba(250, 204, 21, 0.65)';
-    g.fillText('Guía', 8, y1-6);
-    g.fillText('Guía', 8, y2-6);
-    g.restore();
-
 }
