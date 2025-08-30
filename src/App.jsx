@@ -30,8 +30,8 @@ export default function App(){
   const [showOverlays,setShowOverlays]=useState(true)
 
   const [viz,setViz]=useState('circles') // 'circles' | 'mask' | 'edges' | 'contours' | 'none'
-  const [maskOverlay,setMaskOverlay]=useState(null)
-  const [edgesOverlay,setEdgesOverlay]=useState(null)
+  const [maskOverlay,setMaskOverlay]=useState(null) // {image,x,y,w,h}
+  const [edgesOverlay,setEdgesOverlay]=useState(null) // {image,x,y,w,h}
   const [contoursPoly,setContoursPoly]=useState([]) // [{pts:[{x,y},...], accepted:true, cx, cy}]
   const [particleRecords,setParticleRecords]=useState([]) // rows for CSV
 
@@ -420,8 +420,8 @@ export default function App(){
       }
       const maskURL=(function(){ const c=document.createElement('canvas'); c.width=maskRGBA.cols; c.height=maskRGBA.rows; window.cv.imshow(c, maskRGBA); const u=c.toDataURL('image/png'); c.width=1; c.height=1; return u; })()
       const edgesURL=(function(){ const c=document.createElement('canvas'); c.width=edgesRGBA.cols; c.height=edgesRGBA.rows; window.cv.imshow(c, edgesRGBA); const u=c.toDataURL('image/png'); c.width=1; c.height=1; return u; })()
-      setMaskOverlay({url:maskURL, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows})
-      setEdgesOverlay({url:edgesURL, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows})
+      const imgMask=new Image(); imgMask.onload=()=>{ setMaskOverlay({image:imgMask, x:localOff.x, y:localOff.y, w:maskRGBA.cols, h:maskRGBA.rows}); draw() }; imgMask.src=maskURL
+      const imgEdges=new Image(); imgEdges.onload=()=>{ setEdgesOverlay({image:imgEdges, x:localOff.x, y:localOff.y, w:edgesRGBA.cols, h:edgesRGBA.rows}); draw() }; imgEdges.src=edgesURL
 
       const N=filtered.length
       const med=percentile(filtered,50), p10=percentile(filtered,10), p90=percentile(filtered,90)
@@ -437,8 +437,9 @@ export default function App(){
 
       src.delete(); gray.delete(); masked.delete(); cl.delete(); blur.delete(); bin.delete(); opened.delete(); kernel.delete(); contours.delete(); hier.delete(); mask.delete(); maskVis.delete(); edges.delete(); eroded.delete(); boundary.delete(); maskRGBA.delete(); edgesRGBA.delete()
 
-      if(!filtered.length){ setStatus('No se detectaron partículas claras. Ajusta ROI/Exclusiones o enfoque.'); return }
-      setStatus(`Listo. N=${filtered.length} | D50=${med.toFixed(1)} µm | D10=${p10.toFixed(1)} µm | D90=${p90.toFixed(1)} µm`)
+      if(!filtered.length){ setStatus('No se detectaron partículas claras. Ajusta ROI/Exclusiones, aumenta contraste o mejora el enfoque. Sin partículas aceptadas, no se mostrará IUM ni overlays.'); return }
+      if(viz==='circles'){ setViz('mask') }
+      setStatus(`Listo. N=${filtered.length} | D50=${med.toFixed(1)} µm | D10=${p10.toFixed(1)} µm | D90=${p90.toFixed(1)} µm · Cambia "Visualización" para ver máscara/bordes/contornos`)
     }catch(err){
       console.error(err); setStatus('Error durante el análisis.')
     }
