@@ -1,5 +1,10 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { jsPDF } from "jspdf"
+// jsPDF via UMD (CDN)
+function getJsPDF() {
+  return (typeof window !== "undefined" && window.jspdf && window.jspdf.jsPDF)
+    ? window.jspdf.jsPDF
+    : null;
+}
 
 /**
  * Grind Analyzer – Portafiltro (con PDF + D10/D50/D90 en histograma)
