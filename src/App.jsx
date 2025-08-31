@@ -1,12 +1,14 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
+import jsPDF from "jspdf";
 
 /**
- * Grind Analyzer – Portafiltro (paleta clara)
- * - ROI (área de estudio) y Exclusiones (añadir / borrar / limpiar)
- * - Panel de Resultados + Histograma + Índice de precisión (0–100)
- * - Overlays opcionales (Máscara, Borde de máscara, Canny, Contornos, Círculos)
- * - Fix CLAHE (uso correcto o fallback equalizeHist)
- * - Fix passive listeners (wheel/touch con {passive:false})
+ * Grind Analyzer – Portafiltro (con PDF + D10/D50/D90 en histograma)
+ * - ROI y Exclusiones
+ * - Overlays opcionales
+ * - CLAHE con fallback
+ * - Listeners con {passive:false}
+ * - Índice de precisión (0–100)
+ * - Exportar a PDF (canvas + histograma + métricas)
  */
 
 export default function App() {
@@ -20,9 +22,9 @@ export default function App() {
   const imgRef = useRef(null);
 
   // Analysis state
-  const [sizes, setSizes] = useState([]);               // µm (filtradas por IQR)
+  const [sizes, setSizes] = useState([]);               // µm (filtradas)
   const [particles, setParticles] = useState([]);       // [{cx,cy,r_px,r_um}]
-  const [contoursPoly, setContoursPoly] = useState([]); // [{pts, accepted, cx, cy, d_um, ...}]
+  const [contoursPoly, setContoursPoly] = useState([]); // [{pts, accepted, ...}]
 
   // Overlays (canvases)
   const [maskOverlay, setMaskOverlay] = useState(null);        // {canvas,x,y,w,h}
@@ -30,7 +32,6 @@ export default function App() {
   const [boundaryOverlay, setBoundaryOverlay] = useState(null);// {canvas,x,y,w,h}
 
   // Overlays selector
-  const [showOverlays, setShowOverlays] = useState(true);
   const [overlayPreset, setOverlayPreset] = useState("auditar");
   const [overlayAlpha, setOverlayAlpha] = useState(0.6);
   const [showMask, setShowMask] = useState(true);
@@ -59,20 +60,22 @@ export default function App() {
   const [customMM, setCustomMM] = useState("");
   const [umPerPx, setUmPerPx] = useState(0);
 
-  // Viz gate básico
+  // Viz gate
   const [viz, setViz] = useState("mask");
 
   // Results + precisión
   const [results, setResults] = useState({
     N: 0, d10: 0, d50: 0, d90: 0, span: 0,
-    gsd: 0, cv: 0, iqrMd: 0, // métricas base
-    precision: 0             // 0–100
+    gsd: 0, cv: 0, iqrMd: 0, precision: 0
   });
+
+  // Histograma refs (para D10/50/90)
+  const histRef = useRef(null);
 
   // Status
   const [status, setStatus] = useState("Sube una imagen y detecta el aro para calibrar la escala.");
 
-  // -------- Helpers de geometría --------
+  // ---------- Helpers ----------
   function normRect(x0, y0, x1, y1) {
     const x = Math.min(x0, x1), y = Math.min(y0, y1);
     return { x, y, w: Math.abs(x1 - x0), h: Math.abs(y1 - y0) };
@@ -96,8 +99,9 @@ export default function App() {
     const z = view.current.zoom;
     return { x: ix * z + view.current.ox, y: iy * z + view.current.oy };
   }
+  const fmt = (n, d=1) => (isFinite(n) ? Number(n).toFixed(d) : "—");
 
-  // -------- Dibujo principal --------
+  // ---------- Dibujo principal ----------
   function draw() {
     const c = canvasRef.current; if (!c) return;
     const g = c.getContext("2d");
@@ -113,17 +117,17 @@ export default function App() {
 
     // overlays
     if (viz !== "none") {
-      if ((showOverlays || showMask) && maskOverlay?.canvas) {
+      if (showMask && maskOverlay?.canvas) {
         g.save(); g.globalAlpha = overlayAlpha;
         g.drawImage(maskOverlay.canvas, maskOverlay.x, maskOverlay.y, maskOverlay.w, maskOverlay.h);
         g.restore();
       }
-      if ((showOverlays || showBoundary) && boundaryOverlay?.canvas) {
+      if (showBoundary && boundaryOverlay?.canvas) {
         g.save(); g.globalAlpha = Math.min(1, overlayAlpha + 0.15);
         g.drawImage(boundaryOverlay.canvas, boundaryOverlay.x, boundaryOverlay.y, boundaryOverlay.w, boundaryOverlay.h);
         g.restore();
       }
-      if ((showOverlays || showEdges) && edgesOverlay?.canvas) {
+      if (showEdges && edgesOverlay?.canvas) {
         g.save(); g.globalAlpha = Math.min(1, overlayAlpha + 0.25);
         g.drawImage(edgesOverlay.canvas, edgesOverlay.x, edgesOverlay.y, edgesOverlay.w, edgesOverlay.h);
         g.restore();
@@ -143,7 +147,7 @@ export default function App() {
       g.restore();
     }
 
-    // Cuadro temporal (ROI o exclude) mientras dibujas
+    // Cuadro temporal
     if (drawBox.current) {
       const r = drawBox.current;
       g.save();
@@ -161,7 +165,6 @@ export default function App() {
       const label = `${Number(customMM || basketMM)} mm · ${umPerPx ? umPerPx.toFixed(1) : "—"} µm/px`;
       g.fillStyle = "rgba(17,24,39,0.85)"; g.font = `${14 / view.current.zoom}px sans-serif`;
       g.fillText(label, rim.cx + 6 / view.current.zoom, rim.cy - 6 / view.current.zoom);
-      // handles en modo 'rim'
       if (mode === "rim") {
         const hh = 6 / view.current.zoom;
         g.beginPath(); g.arc(rim.cx, rim.cy, hh, 0, Math.PI * 2); g.fill();
@@ -204,9 +207,9 @@ export default function App() {
     }
   }
 
-  useEffect(draw, [img, rim, roi, excls, maskOverlay, edgesOverlay, boundaryOverlay, particles, contoursPoly, showOverlays, showMask, showBoundary, showEdges, showContours, showCircles, overlayAlpha, viz, lensEnabled, mode]);
+  useEffect(draw, [img, rim, roi, excls, maskOverlay, edgesOverlay, boundaryOverlay, particles, contoursPoly, showMask, showBoundary, showEdges, showContours, showCircles, overlayAlpha, viz, lensEnabled, mode]);
 
-  // -------- Wheel / pan / lens --------
+  // ---------- Wheel / pan / lens ----------
   function onWheel(e) {
     if (e && e.cancelable) e.preventDefault();
     const rect = canvasRef.current.getBoundingClientRect();
@@ -317,11 +320,12 @@ export default function App() {
     };
   }, [img]);
 
-  // -------- File load --------
+  // ---------- File load ----------
   async function handleFile(e) {
     const f = e.target.files?.[0]; if (!f) return;
     const url = URL.createObjectURL(f);
     const im = new Image();
+    // im.crossOrigin = "anonymous"; // no necesario para File API
     im.onload = () => {
       imgRef.current = im; setImg(im);
       setRim(null); setRoi(null); setExcls([]);
@@ -334,7 +338,7 @@ export default function App() {
     im.src = url;
   }
 
-  // -------- Rim detection (Hough) --------
+  // ---------- Rim detection (Hough) ----------
   function detectRim() {
     try {
       if (!window.cv || !img) { setStatus("OpenCV no disponible o imagen no cargada."); return; }
@@ -363,7 +367,7 @@ export default function App() {
     } catch (err) { console.error(err); setStatus("Error detectando aro (Hough)."); }
   }
 
-  // -------- Analyze --------
+  // ---------- Analyze ----------
   function analyze() {
     try {
       if (!window.cv || !img) { setStatus("OpenCV no disponible o imagen no cargada."); return; }
@@ -436,17 +440,15 @@ export default function App() {
       const maskRGBA = new window.cv.Mat(); window.cv.cvtColor(maskVis, maskRGBA, window.cv.COLOR_GRAY2RGBA, 0);
       for (let y = 0; y < maskRGBA.rows; y++) for (let x = 0; x < maskRGBA.cols; x++) {
         const a = maskRGBA.ucharPtr(y, x); if (a[0] > 0) { a[0] = 59; a[1] = 130; a[2] = 246; a[3] = 180; } else { a[3] = 0; }
-      } // azul translúcido
-
+      }
       const edgesRGBA = new window.cv.Mat(); window.cv.cvtColor(edges, edgesRGBA, window.cv.COLOR_GRAY2RGBA, 0);
       for (let y = 0; y < edgesRGBA.rows; y++) for (let x = 0; x < edgesRGBA.cols; x++) {
         const a = edgesRGBA.ucharPtr(y, x); if (a[0] > 0) { a[0] = 255; a[1] = 255; a[2] = 255; a[3] = 255; } else { a[3] = 0; }
       }
-
       const boundaryRGBA = new window.cv.Mat(); window.cv.cvtColor(boundary, boundaryRGBA, window.cv.COLOR_GRAY2RGBA, 0);
       for (let y = 0; y < boundaryRGBA.rows; y++) for (let x = 0; x < boundaryRGBA.cols; x++) {
         const a = boundaryRGBA.ucharPtr(y, x); if (a[0] > 0) { a[0] = 16; a[1] = 185; a[2] = 129; a[3] = 255; } else { a[3] = 0; }
-      } // verde
+      }
 
       // Overlay canvases
       const cm = document.createElement("canvas"); cm.width = maskRGBA.cols; cm.height = maskRGBA.rows; window.cv.imshow(cm, maskRGBA);
@@ -514,18 +516,11 @@ export default function App() {
         span = d10 > 0 ? d90 / d10 : 0;
       }
 
-      // === Precisión ===
+      // Precisión
       const prec = computePrecisionMetrics(filtered, { d10, d50, d90, span });
+      setResults({ N, d10, d50, d90, span, gsd: prec.gsd, cv: prec.cv, iqrMd: prec.iqrMd, precision: prec.score });
 
-      setResults({
-        N, d10, d50, d90, span,
-        gsd: prec.gsd, cv: prec.cv, iqrMd: prec.iqrMd,
-        precision: prec.score
-      });
-
-      setViz("mask"); setShowOverlays(true);
-      setShowMask(true); setShowBoundary(true); setShowEdges(true); setShowContours(true); setShowCircles(false);
-
+      setViz("mask");
       setStatus(N
         ? `Listo. N=${N} | D50=${d50.toFixed(1)} µm | Índice de precisión=${prec.score.toFixed(0)}/100`
         : "No se detectaron partículas claras. Ajusta ROI/Exclusiones, enfoque/contraste.");
@@ -538,7 +533,7 @@ export default function App() {
     } catch (err) { console.error(err); setStatus("Error en el análisis."); }
   }
 
-  // -------- Utils: IQR / quantile / precision --------
+  // ---------- Utils ----------
   function iqrFilter(arr) {
     if (!arr?.length) return [];
     const a = [...arr].sort((x, y) => x - y);
@@ -557,21 +552,19 @@ export default function App() {
     if (!a?.length) return 0;
     const n = a.length;
     const mean = a.reduce((s,v)=>s+v,0) / n;
-    const varsum = a.reduce((s,v)=>s + (v-mean)*(v-mean), 0) / n; // poblacional
+    const varsum = a.reduce((s,v)=>s + (v-mean)*(v-mean), 0) / n;
     return Math.sqrt(varsum);
   }
   function computePrecisionMetrics(data, qs) {
     const arr = (data || []).filter(v => v > 0);
     if (!arr.length) return { score: 0, gsd: 0, cv: 0, iqrMd: 0 };
 
-    // cuantiles si no vienen
     const sorted = [...arr].sort((a,b)=>a-b);
     const d10 = qs?.d10 ?? quantile(sorted, 0.1);
     const d50 = qs?.d50 ?? quantile(sorted, 0.5);
     const d90 = qs?.d90 ?? quantile(sorted, 0.9);
     const span = qs?.span ?? (d10>0 ? d90/d10 : 0);
 
-    // métricas base
     const mean = arr.reduce((s,v)=>s+v,0)/arr.length;
     const sd = stdDev(arr);
     const cv = mean>0 ? sd/mean : 0;
@@ -581,20 +574,17 @@ export default function App() {
 
     const logs = arr.map(v=>Math.log(v));
     const sdLog = stdDev(logs);
-    const gsd = Math.exp(sdLog); // 1.0 = idealmente monodisperso
+    const gsd = Math.exp(sdLog);
 
-    // componentes → [0,1], mayor = mejor
-    const s1 = clamp01((2.0 - Math.min(gsd, 2.0)) / (2.0 - 1.0));   // GSD: 1→1, 2→0
-    const s2 = clamp01(1 - (iqrMd / 0.8));                           // IQR/Md: 0.8→0
-    const s3 = clamp01(1 - ((Math.max(span,1) - 1) / 3));            // span 4→0
-
+    const s1 = clamp01((2.0 - Math.min(gsd, 2.0)) / (2.0 - 1.0)); // 1→1, 2→0
+    const s2 = clamp01(1 - (iqrMd / 0.8));                         // 0.8→0
+    const s3 = clamp01(1 - ((Math.max(span,1) - 1) / 3));          // 4→0
     const score = Math.round(100 * (0.5*s1 + 0.3*s2 + 0.2*s3));
     return { score, gsd, cv, iqrMd };
   }
   function clamp01(x){ return Math.max(0, Math.min(1, x)); }
 
-  // -------- Histograma simple (sin libs) --------
-  const histRef = useRef(null);
+  // ---------- Histograma (con D10/D50/D90) ----------
   useEffect(() => {
     const c = histRef.current; if (!c) return;
     const g = c.getContext("2d");
@@ -602,7 +592,7 @@ export default function App() {
     const data = sizes;
     if (!data?.length) return;
 
-    const W = c.width, H = c.height, pad = 24;
+    const W = c.width, H = c.height, pad = 28;
     const bins = Math.max(10, Math.min(48, Math.ceil(Math.sqrt(data.length))));
     const min = Math.min(...data), max = Math.max(...data);
     const bw = (max - min) / bins || 1;
@@ -629,14 +619,106 @@ export default function App() {
       g.fillRect(x, H - pad - h, Math.max(1, pxPerBin - 2), h);
     });
 
+    // líneas D10/D50/D90
+    const d10 = results.d10, d50 = results.d50, d90 = results.d90;
+    function xFor(v){ return pad + ((v - min) / (max - min || 1)) * plotW; }
+    const drawVLine = (x, color, label) => {
+      g.save();
+      g.strokeStyle = color; g.lineWidth = 2;
+      g.setLineDash([6, 4]); g.beginPath();
+      g.moveTo(x, pad - 4); g.lineTo(x, H - pad + 4); g.stroke();
+      g.setLineDash([]);
+      g.fillStyle = color; g.font = "12px sans-serif";
+      const txt = `${label} ${isFinite(x)?fmt(label==='D50'?d50:label==='D10'?d10:d90,0):'—'}µm`;
+      const wtxt = g.measureText(txt).width;
+      g.fillText(txt, Math.min(Math.max(pad, x - wtxt/2), W - pad - wtxt), pad - 8);
+      g.restore();
+    };
+    if (data.length>=3) {
+      drawVLine(xFor(d10), "#f59e0b", "D10");
+      drawVLine(xFor(d50), "#111827", "D50");
+      drawVLine(xFor(d90), "#10b981", "D90");
+    }
+
     // etiquetas min/max
     g.fillStyle = "#374151"; g.font = "12px sans-serif";
-    g.fillText(`${min.toFixed(0)}µm`, pad, H - 4);
-    const txt = `${max.toFixed(0)}µm`;
-    g.fillText(txt, W - pad - g.measureText(txt).width, H - 4);
-  }, [sizes]);
+    g.fillText(`${min.toFixed(0)}µm`, pad, H - 6);
+    const tmax = `${max.toFixed(0)}µm`;
+    g.fillText(tmax, W - pad - g.measureText(tmax).width, H - 6);
+  }, [sizes, results.d10, results.d50, results.d90]);
 
-  // -------- Presets --------
+  // ---------- Exportar PDF ----------
+  function exportPDF() {
+    if (!results.N) { setStatus("No hay resultados para exportar. Ejecuta Analizar primero."); return; }
+    const doc = new jsPDF({ unit: "mm", format: "a4", compress: true });
+    const margin = 12;
+    let y = margin;
+
+    // Header
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16);
+    doc.text("Grind Analyzer – Reporte de Molienda (Portafiltro)", margin, y);
+    y += 8;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(10);
+    const now = new Date();
+    doc.text(`Fecha: ${now.toLocaleString()}`, margin, y);
+    y += 6;
+
+    // Tabla de métricas
+    const mm = Number(customMM || basketMM);
+    const scaleStr = umPerPx ? `${umPerPx.toFixed(1)} µm/px` : "—";
+    const roiStr = roi ? `${fmt(roi.w * umPerPx / 1000,2)}×${fmt(roi.h * umPerPx / 1000,2)} mm` : "imagen completa";
+    const rows = [
+      [`N partículas`, String(results.N)],
+      [`D10 (µm)`, fmt(results.d10,1)],
+      [`D50 (µm)`, fmt(results.d50,1)],
+      [`D90 (µm)`, fmt(results.d90,1)],
+      [`Span (D90/D10)`, results.d10?fmt(results.span,2):"—"],
+      [`GSD (σg)`, fmt(results.gsd,3)],
+      [`CV (%)`, fmt(results.cv*100,1)],
+      [`IQR/Md`, fmt(results.iqrMd,3)],
+      [`Índice de precisión (0–100)`, String(Math.round(results.precision))],
+      [`Diámetro canasto (mm)`, String(mm)],
+      [`Escala`, scaleStr],
+      [`ROI`, roiStr]
+    ];
+    const col1 = margin, col2 = 85;
+    rows.forEach(r => {
+      doc.setFont("helvetica", "bold"); doc.text(r[0], col1, y);
+      doc.setFont("helvetica", "normal"); doc.text(r[1], col2, y);
+      y += 6;
+    });
+    y += 2;
+
+    // Imagen: canvas principal
+    const canvas = canvasRef.current;
+    if (canvas) {
+      const imgData = canvas.toDataURL("image/png", 1.0);
+      const maxW = 180, w = maxW, h = (canvas.height / canvas.width) * w;
+      if (y + h > 297 - margin) { doc.addPage(); y = margin; }
+      doc.text("Vista análisis (overlays/ROI)", margin, y); y += 4;
+      doc.addImage(imgData, "PNG", margin, y, w, h, undefined, "FAST");
+      y += h + 6;
+    }
+
+    // Imagen: histograma
+    const hc = histRef.current;
+    if (hc) {
+      const imgData = hc.toDataURL("image/png", 1.0);
+      const maxW = 180, w = maxW, h = (hc.height / hc.width) * w;
+      if (y + h > 297 - margin) { doc.addPage(); y = margin; }
+      doc.text("Histograma con D10/D50/D90", margin, y); y += 4;
+      doc.addImage(imgData, "PNG", margin, y, w, h, undefined, "FAST");
+      y += h + 6;
+    }
+
+    // Footer
+    doc.setFontSize(8);
+    doc.text("Generado con Grind Analyzer (Portafiltro)", margin, 297 - 6);
+
+    doc.save(`grind-report-${now.toISOString().slice(0,19).replace(/[:T]/g,'-')}.pdf`);
+  }
+
+  // ---------- Presets ----------
   useEffect(() => {
     if (overlayPreset === "todos") {
       setShowMask(true); setShowBoundary(true); setShowEdges(true); setShowContours(true); setShowCircles(true);
@@ -651,7 +733,9 @@ export default function App() {
     }
   }, [overlayPreset]);
 
-  // -------- UI --------
+  // ---------- UI ----------
+  const precChip = colorForPrecision(results.precision);
+
   return (
     <div className="max-w-7xl mx-auto p-4 bg-white text-gray-900 min-h-screen">
       <header className="flex flex-wrap items-center gap-3">
@@ -677,6 +761,14 @@ export default function App() {
         </button>
         <button onClick={analyze} className="px-3 py-1 rounded bg-emerald-600 text-white">
           Analizar
+        </button>
+        <button
+          onClick={exportPDF}
+          className="px-3 py-1 rounded bg-gray-800 text-white"
+          disabled={!results.N}
+          title={results.N ? "Exportar reporte en PDF" : "Analiza primero para habilitar"}
+        >
+          Exportar PDF
         </button>
 
         {/* Herramientas */}
@@ -751,7 +843,6 @@ export default function App() {
           <div ref={holderRef} className="relative w-full">
             <canvas
               ref={canvasRef}
-              // sin onWheel aquí; listeners con passive:false en useLayoutEffect
               onPointerDown={onPointerDown}
               onPointerMove={onPointerMove}
               onPointerUp={onPointerUp}
@@ -764,25 +855,33 @@ export default function App() {
 
         {/* Panel de resultados */}
         <div className="border rounded p-3">
-          <h2 className="font-semibold mb-2">Resultados</h2>
-          <ul className="text-sm space-y-1">
+          <div className="flex items-center justify-between">
+            <h2 className="font-semibold">Resultados</h2>
+            <span
+              className="text-xs px-2 py-1 rounded"
+              style={{ background: precChip.bg, color: precChip.fg }}
+              title={`Índice de precisión: ${Math.round(results.precision)}/100 (${precChip.label})`}
+            >
+              Precisión {results.N ? Math.round(results.precision) : "—"}/100
+            </span>
+          </div>
+          <ul className="text-sm space-y-1 mt-2">
             <li><span className="text-gray-600">N partículas:</span> {results.N}</li>
-            <li><span className="text-gray-600">D10:</span> {results.N ? results.d10.toFixed(1) : "—"} µm</li>
-            <li><span className="text-gray-600">D50 (mediana):</span> {results.N ? results.d50.toFixed(1) : "—"} µm</li>
-            <li><span className="text-gray-600">D90:</span> {results.N ? results.d90.toFixed(1) : "—"} µm</li>
-            <li><span className="text-gray-600">Span D90/D10:</span> {results.N && results.d10>0 ? (results.span).toFixed(2) : "—"}</li>
-            <li className="mt-2"><span className="text-gray-600">GSD (σ<sub>g</sub>):</span> {results.N ? results.gsd.toFixed(3) : "—"}</li>
-            <li><span className="text-gray-600">CV (std/mean):</span> {results.N ? (results.cv*100).toFixed(1) : "—"}%</li>
-            <li><span className="text-gray-600">IQR/Md:</span> {results.N ? results.iqrMd.toFixed(3) : "—"}</li>
-            <li className="text-base font-semibold mt-1">
-              Índice de precisión: {results.N ? Math.round(results.precision) : "—"}/100
-            </li>
+            <li><span className="text-gray-600">D10:</span> {results.N ? fmt(results.d10,1) : "—"} µm</li>
+            <li><span className="text-gray-600">D50 (mediana):</span> {results.N ? fmt(results.d50,1) : "—"} µm</li>
+            <li><span className="text-gray-600">D90:</span> {results.N ? fmt(results.d90,1) : "—"} µm</li>
+            <li><span className="text-gray-600">Span D90/D10:</span> {results.N && results.d10>0 ? fmt(results.span,2) : "—"}</li>
+            <li className="mt-2"><span className="text-gray-600">GSD (σ<sub>g</sub>):</span> {results.N ? fmt(results.gsd,3) : "—"}</li>
+            <li><span className="text-gray-600">CV (std/mean):</span> {results.N ? fmt(results.cv*100,1) : "—"}%</li>
+            <li><span className="text-gray-600">IQR/Md:</span> {results.N ? fmt(results.iqrMd,3) : "—"}</li>
+            <li><span className="text-gray-600">Escala:</span> {umPerPx ? `${fmt(umPerPx,1)} µm/px` : "—"}</li>
+            <li><span className="text-gray-600">ROI:</span> {roi ? `${fmt(roi.w * umPerPx / 1000,2)}×${fmt(roi.h * umPerPx / 1000,2)} mm` : "imagen completa"}</li>
           </ul>
 
           <h3 className="font-semibold mt-3 mb-1">Histograma</h3>
-          <canvas ref={histRef} width={320} height={140} className="border rounded bg-white" />
+          <canvas ref={histRef} width={320} height={160} className="border rounded bg-white" />
           <p className="text-xs text-gray-500 mt-2">
-            El índice combina GSD (log-normal), IQR/Md y Span; mayor es mejor (más uniforme).
+            Líneas (D10 naranja, D50 negro, D90 verde). Índice combina GSD, IQR/Md y Span (más alto = más uniforme).
           </p>
         </div>
       </div>
@@ -800,4 +899,12 @@ function ToolBtn({ label, active, onClick }) {
       {label}
     </button>
   );
+}
+
+/* ---- Chip de precisión (color) ---- */
+function colorForPrecision(score) {
+  const s = Number(score) || 0;
+  if (s >= 80) return { bg: "#ecfdf5", fg: "#065f46", label: "Alta" };
+  if (s >= 60) return { bg: "#fffbeb", fg: "#92400e", label: "Media" };
+  return { bg: "#fef2f2", fg: "#991b1b", label: "Baja" };
 }
